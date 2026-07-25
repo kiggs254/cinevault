@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { providerFor } from "./providers";
+import { providerFor, safeChatCreate } from "./providers";
 import { planAndSearch, startFromQuery } from "../service/downloads";
 
 export interface AgentMessage {
@@ -131,7 +131,7 @@ export async function runAgent(
   for (let step = 0; step < 6; step++) {
     let completion;
     try {
-      completion = await provider.client.chat.completions.create({
+      completion = await safeChatCreate(provider.client, {
         model: provider.model,
         messages,
         tools,

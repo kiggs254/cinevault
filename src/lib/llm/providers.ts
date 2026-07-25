@@ -54,25 +54,42 @@ function extractJSON(text: string): string {
   return body.trim();
 }
 
+/**
+ * Create a completion, adapting to model constraints. Some models (e.g. Kimi
+ * k3) reject a custom temperature and/or response_format — try the ideal params
+ * first, then progressively relax (temperature=1, then drop JSON mode).
+ */
 async function createChat(
   provider: LlmProvider,
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   temperature: number,
 ) {
-  // Prefer JSON mode; fall back for providers that reject response_format.
+  const base = { model: provider.model, messages };
+  const attempts: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming[] = [
+    { ...base, temperature, response_format: { type: "json_object" } },
+    { ...base, temperature: 1, response_format: { type: "json_object" } },
+    { ...base, temperature: 1 },
+  ];
+  let lastErr: unknown;
+  for (const params of attempts) {
+    try {
+      return await provider.client.chat.completions.create(params);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+/** Like create(), but retries with temperature=1 for models that require it. */
+export async function safeChatCreate(
+  client: OpenAI,
+  params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+) {
   try {
-    return await provider.client.chat.completions.create({
-      model: provider.model,
-      messages,
-      temperature,
-      response_format: { type: "json_object" },
-    });
+    return await client.chat.completions.create(params);
   } catch {
-    return await provider.client.chat.completions.create({
-      model: provider.model,
-      messages,
-      temperature,
-    });
+    return await client.chat.completions.create({ ...params, temperature: 1 });
   }
 }
 
