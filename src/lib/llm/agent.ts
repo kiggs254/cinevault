@@ -7,10 +7,19 @@ export interface AgentMessage {
   content: string;
 }
 
+export interface AgentOption {
+  id: string;
+  label: string;
+  meta?: string;
+  recommended?: boolean;
+  download: Record<string, unknown>;
+}
+
 export type AgentEvent =
   | { type: "status"; message: string }
   | { type: "action"; message: string; downloadId?: string }
   | { type: "message"; content: string }
+  | { type: "options"; title: string; options: AgentOption[] }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -55,10 +64,9 @@ const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 
 const SYSTEM = `You are the assistant for a self-hosted, AI-driven media downloader that saves finished downloads to the user's S3 storage.
 
-- When the user wants to see options, call search_media and summarize the best few (quality, seeders, size).
-- When the user clearly wants something fetched, call queue_download.
-- For batch requests ("all of Show season 2 in 1080p"), call queue_download once per episode/target.
-- Be concise and friendly. Report what you queued.
+- For most "find / download X" requests, call search_media — the app then shows the user a selectable list of results they tap to download. Afterwards, briefly point them to the list and name the top pick. Do NOT paste the whole list yourself; it is already shown as tappable options.
+- Use queue_download only when the user explicitly says to just grab the best automatically, or for batch requests ("all of Show season 2 in 1080p") — call it once per episode/target.
+- Reply in concise Markdown (short paragraphs, **bold** for titles, lists where helpful).
 - Only help download content the user has the legal right to obtain.`;
 
 async function execTool(
@@ -71,18 +79,49 @@ async function execTool(
     emit({ type: "status", message: `Searching for “${query}”…` });
     try {
       const { plan, ranked } = await planAndSearch(query);
+      const top = ranked.slice(0, 6);
+      emit({
+        type: "options",
+        title: `Results for ${plan.title}${plan.year ? ` (${plan.year})` : ""}`,
+        options: top.map((r, i) => ({
+          id: String(i),
+          label: r.title,
+          meta: [
+            r.parsed.resolution,
+            r.parsed.source,
+            `${r.seeders} seeders`,
+            `${(r.size / 1024 ** 3).toFixed(2)} GB`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          recommended: i === 0,
+          download: {
+            title: r.title,
+            magnetUrl: r.magnetUrl,
+            downloadUrl: r.downloadUrl,
+            infoHash: r.infoHash,
+            indexer: r.indexer,
+            size: r.size,
+            seeders: r.seeders,
+            query,
+            plan: {
+              kind: plan.kind,
+              title: plan.title,
+              year: plan.year,
+              season: plan.season,
+              episode: plan.episode,
+            },
+          },
+        })),
+      });
       emit({ type: "status", message: `Found ${ranked.length} results.` });
       return {
         understood: plan,
-        results: ranked.slice(0, 6).map((r, i) => ({
-          rank: i + 1,
-          title: r.title,
-          seeders: r.seeders,
-          sizeGB: Number((r.size / (1024 ** 3)).toFixed(2)),
-          quality: r.parsed.resolution ?? "unknown",
-          source: r.parsed.source ?? "unknown",
-          score: r.score,
-        })),
+        resultCount: ranked.length,
+        note:
+          ranked.length > 0
+            ? "A selectable list was shown to the user — they tap one to download. Point them to it and name the top pick; do NOT paste the full list."
+            : "No results found; suggest different wording or check indexers in Settings.",
       };
     } catch (e) {
       return { error: (e as Error).message };

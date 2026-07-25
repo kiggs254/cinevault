@@ -1,29 +1,33 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Sparkles, Send, Loader2, CheckCircle2, Search } from "lucide-react";
-import { readSSE } from "@/lib/client";
+import { Sparkles, Send, Loader2, Search, CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+import { readSSE, jsonFetch } from "@/lib/client";
+import { Markdown } from "@/components/markdown";
+import { OptionsList, type ChatOption } from "@/components/options-list";
 
-interface Msg {
-  role: "user" | "assistant";
-  content: string;
-}
-interface Trace {
-  kind: "status" | "action";
-  text: string;
-}
+type Item =
+  | { kind: "msg"; role: "user" | "assistant"; content: string }
+  | { kind: "options"; id: string; title: string; options: ChatOption[] }
+  | { kind: "action"; text: string };
+
+let counter = 0;
+const uid = () => `b${++counter}`;
 
 const SUGGESTIONS = [
-  "Find The Matrix 1999 in 1080p",
-  "Grab Interstellar in 4K",
-  "Download all of a show's season 1 in 1080p",
+  "Find Debian 12 netinst",
+  "Show me Ubuntu 24.04 options",
+  "Grab the latest Alpine standard ISO",
 ];
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [trace, setTrace] = useState<Trace[]>([]);
+  const [trace, setTrace] = useState<string[]>([]);
+  const [pickingKey, setPickingKey] = useState<string | null>(null);
+  const [donePicks, setDonePicks] = useState<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement>(null);
 
   function scrollDown() {
@@ -36,38 +40,72 @@ export default function ChatPage() {
     e?.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
-    const next: Msg[] = [...messages, { role: "user", content: text }];
-    setMessages(next);
+    const next: Item[] = [...items, { kind: "msg", role: "user", content: text }];
+    setItems(next);
     setInput("");
     setBusy(true);
     setTrace([]);
     scrollDown();
 
+    const msgs = next
+      .filter((i): i is Extract<Item, { kind: "msg" }> => i.kind === "msg")
+      .map((m) => ({ role: m.role, content: m.content }));
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: msgs }),
       });
       if (!res.ok || !res.body) throw new Error("Chat request failed");
 
       await readSSE(res, (ev) => {
-        if (ev.type === "status") setTrace((t) => [...t, { kind: "status", text: String(ev.message) }]);
-        else if (ev.type === "action")
-          setTrace((t) => [...t, { kind: "action", text: String(ev.message) }]);
-        else if (ev.type === "message") {
-          setMessages((m) => [...m, { role: "assistant", content: String(ev.content) }]);
+        if (ev.type === "status") {
+          setTrace((t) => [...t, String(ev.message)]);
+        } else if (ev.type === "action") {
+          setItems((p) => [...p, { kind: "action", text: String(ev.message) }]);
           scrollDown();
+        } else if (ev.type === "message") {
+          setItems((p) => [...p, { kind: "msg", role: "assistant", content: String(ev.content) }]);
+          scrollDown();
+        } else if (ev.type === "options") {
+          const raw = Array.isArray(ev.options) ? (ev.options as Record<string, unknown>[]) : [];
+          const options: ChatOption[] = raw.map((o) => ({
+            id: String(o.id),
+            label: String(o.label),
+            meta: o.meta ? String(o.meta) : undefined,
+            recommended: !!o.recommended,
+            payload: o.download,
+          }));
+          if (options.length) {
+            setItems((p) => [...p, { kind: "options", id: uid(), title: String(ev.title), options }]);
+            scrollDown();
+          }
         } else if (ev.type === "error") {
-          setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${String(ev.message)}` }]);
+          setItems((p) => [...p, { kind: "msg", role: "assistant", content: `⚠️ ${String(ev.message)}` }]);
         }
       });
-    } catch (e) {
-      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${(e as Error).message}` }]);
+    } catch (err) {
+      setItems((p) => [...p, { kind: "msg", role: "assistant", content: `⚠️ ${(err as Error).message}` }]);
     } finally {
       setBusy(false);
       setTrace([]);
       scrollDown();
+    }
+  }
+
+  async function pickOption(blockId: string, o: ChatOption) {
+    const key = `${blockId}:${o.id}`;
+    setPickingKey(key);
+    try {
+      await jsonFetch("/api/download", { method: "POST", body: JSON.stringify(o.payload) });
+      setDonePicks((prev) => new Set(prev).add(key));
+      setItems((p) => [...p, { kind: "action", text: `Queued: ${o.label}` }]);
+      scrollDown();
+    } catch (err) {
+      setItems((p) => [...p, { kind: "msg", role: "assistant", content: `⚠️ ${(err as Error).message}` }]);
+    } finally {
+      setPickingKey(null);
     }
   }
 
@@ -81,12 +119,13 @@ export default function ChatPage() {
       </header>
 
       <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-        {messages.length === 0 && (
+        {items.length === 0 && (
           <div className="panel rise p-6">
             <Sparkles className="mb-3 text-accent" size={22} />
             <p className="text-sm text-muted">
-              Ask me to find or fetch anything. I can search indexers, compare releases, and queue
-              downloads — including batches like “all of a show’s season”.
+              Ask me to find media and I&apos;ll show you a **tappable list** of results — pick one to
+              download it straight to your storage. I can also grab batches (&ldquo;all of a
+              show&apos;s season&rdquo;).
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {SUGGESTIONS.map((s) => (
@@ -102,35 +141,60 @@ export default function ChatPage() {
           </div>
         )}
 
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
-                m.role === "user" ? "bg-accent text-[#1a1206]" : "panel text-ink"
-              }`}
-            >
-              {m.content}
+        {items.map((it, i) => {
+          if (it.kind === "msg") {
+            return (
+              <div key={i} className={`flex ${it.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[88%] rounded-2xl px-4 py-2.5 text-sm ${
+                    it.role === "user"
+                      ? "whitespace-pre-wrap bg-accent text-[#1a1206]"
+                      : "panel text-ink"
+                  }`}
+                >
+                  {it.role === "user" ? it.content : <Markdown>{it.content}</Markdown>}
+                </div>
+              </div>
+            );
+          }
+          if (it.kind === "options") {
+            const prefix = `${it.id}:`;
+            const busyId = pickingKey?.startsWith(prefix) ? pickingKey.slice(prefix.length) : null;
+            const doneIds = new Set(
+              [...donePicks].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)),
+            );
+            return (
+              <OptionsList
+                key={it.id}
+                title={it.title}
+                options={it.options}
+                busyId={busyId}
+                doneIds={doneIds}
+                onSelect={(o) => pickOption(it.id, o)}
+              />
+            );
+          }
+          // action
+          return (
+            <div key={i} className="flex items-center gap-2 text-xs text-success">
+              <CheckCircle2 size={14} /> {it.text} —{" "}
+              <Link href="/" className="underline hover:text-ink">
+                track on Command
+              </Link>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {busy && (
           <div className="space-y-1.5">
             {trace.map((t, i) => (
               <div key={i} className="flex items-center gap-2 text-xs text-muted">
-                {t.kind === "action" ? (
-                  <CheckCircle2 size={13} className="text-success" />
-                ) : (
-                  <Search size={13} className="text-accent" />
-                )}
-                {t.text}
+                <Search size={13} className="text-accent" /> {t}
               </div>
             ))}
-            {trace.length === 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted">
-                <Loader2 size={13} className="animate-spin" /> Thinking…
-              </div>
-            )}
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <Loader2 size={13} className="animate-spin" /> Thinking…
+            </div>
           </div>
         )}
       </div>
@@ -138,7 +202,7 @@ export default function ChatPage() {
       <form onSubmit={send} className="panel mt-4 flex items-center gap-2 p-2">
         <input
           className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-ink outline-none placeholder:text-faint"
-          placeholder="Ask for a movie, show, or “download …”"
+          placeholder="Find a movie, show, distro… or “download …”"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}

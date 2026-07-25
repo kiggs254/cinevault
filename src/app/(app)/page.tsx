@@ -39,6 +39,7 @@ export default function CommandPage() {
         loaded={dl.loaded}
         onRetry={dl.retry}
         onRemove={dl.remove}
+        onRefresh={dl.refetch}
       />
     </div>
   );
