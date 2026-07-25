@@ -5,7 +5,7 @@ import { createRedis } from "../lib/redis";
 import { DOWNLOAD_QUEUE } from "../lib/queue";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
-import { QbClient, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
+import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -59,11 +59,12 @@ async function setStatus(id: string, status: DownloadStatus, progress?: number) 
 async function waitForTorrent(
   qb: QbClient,
   tag: string,
+  hash: string | undefined,
   timeoutMs: number,
 ): Promise<QbTorrentInfo | undefined> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const info = await qb.getByTag(tag);
+    const info = (hash ? await qb.getByHash(hash) : undefined) ?? (await qb.getByTag(tag));
     if (info) return info;
     await sleep(2000);
   }
@@ -136,8 +137,12 @@ async function processDownload(id: string): Promise<void> {
   await qb.ensureCategory(CATEGORY);
   await setStatus(id, "DOWNLOADING", dl.progress);
 
-  // Add the torrent unless it is already present (idempotent retries).
-  let info = await qb.getByTag(id);
+  // Find the torrent by info-hash (survives qBittorrent's dedup, which keeps the
+  // original tag) or by tag; add it only if genuinely absent.
+  const expectedHash =
+    dl.infoHash ?? (dl.magnet.startsWith("magnet:") ? parseInfoHash(dl.magnet) : undefined);
+  let info =
+    (expectedHash ? await qb.getByHash(expectedHash) : undefined) ?? (await qb.getByTag(id));
   if (!info) {
     const isMagnet = dl.magnet.startsWith("magnet:");
     await qb.addTorrent({
@@ -147,7 +152,7 @@ async function processDownload(id: string): Promise<void> {
       category: CATEGORY,
       tag: id,
     });
-    info = await waitForTorrent(qb, id, REGISTER_TIMEOUT_MS);
+    info = await waitForTorrent(qb, id, expectedHash, REGISTER_TIMEOUT_MS);
   }
   if (!info) throw new Error("Torrent failed to register in qBittorrent");
 

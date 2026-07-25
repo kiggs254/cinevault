@@ -23,9 +23,9 @@ export function downloadQueue(): Queue<DownloadJobData> {
 }
 
 export async function enqueueDownload(downloadId: string): Promise<void> {
-  await downloadQueue().add(
-    "download",
-    { downloadId },
-    { jobId: downloadId }, // dedupe: one active job per download
-  );
+  const q = downloadQueue();
+  // Remove any prior (completed/failed) job with this id so retries actually re-run
+  // — BullMQ ignores add() for an existing jobId otherwise.
+  await q.remove(downloadId).catch(() => {});
+  await q.add("download", { downloadId }, { jobId: downloadId });
 }
