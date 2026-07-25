@@ -185,7 +185,7 @@ async function processDownload(id: string): Promise<void> {
     s3,
     bucket: cfg.s3.bucket,
     contentPath,
-    keyPrefix: organized.s3Prefix,
+    keyPrefix: [cfg.s3.basePrefix, organized.s3Prefix].filter(Boolean).join("/"),
     onProgress: emitUpload,
   });
 

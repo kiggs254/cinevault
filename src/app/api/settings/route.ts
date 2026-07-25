@@ -12,7 +12,7 @@ const ALLOWED_SETTINGS = new Set([
   "moonshotBaseUrl", "moonshotModel", "mimoBaseUrl", "mimoModel",
   "qbitUrl", "qbitUser",
   "prowlarrUrl",
-  "s3Endpoint", "s3Region", "s3Bucket", "s3AccessKeyId", "s3PublicUrl",
+  "s3Endpoint", "s3Region", "s3Bucket", "s3AccessKeyId", "s3PublicUrl", "s3BasePrefix",
   "preferredQuality", "minSeeders", "maxSizeGB", "deleteAfterUpload",
 ]);
 const ALLOWED_SECRETS = new Set([

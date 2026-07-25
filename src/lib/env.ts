@@ -50,6 +50,7 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_PUBLIC_URL: z.string().optional(),
+  S3_BASE_PREFIX: z.string().optional(),
 
   // Optional metadata enrichment
   TMDB_API_KEY: z.string().optional(),

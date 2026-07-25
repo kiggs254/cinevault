@@ -18,6 +18,7 @@ export interface ResolvedConfig {
     accessKeyId?: string;
     secretAccessKey?: string;
     publicUrl?: string;
+    basePrefix: string;
   };
   tmdb: { apiKey?: string };
   prefs: {
@@ -97,6 +98,7 @@ export async function getConfig(): Promise<ResolvedConfig> {
       accessKeyId: str(settings.s3AccessKeyId) ?? env.S3_ACCESS_KEY_ID,
       secretAccessKey: dec("s3SecretAccessKey") ?? env.S3_SECRET_ACCESS_KEY,
       publicUrl: str(settings.s3PublicUrl) ?? env.S3_PUBLIC_URL,
+      basePrefix: str(settings.s3BasePrefix) ?? env.S3_BASE_PREFIX ?? "moviehub",
     },
     tmdb: { apiKey: dec("tmdbApiKey") ?? env.TMDB_API_KEY },
     prefs: {
