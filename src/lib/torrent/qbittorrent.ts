@@ -63,14 +63,22 @@ export class QbClient {
       headers: this.headers({ "Content-Type": "application/x-www-form-urlencoded" }),
       body,
     });
-    const text = await res.text();
-    if (!res.ok || text.trim() !== "Ok.") {
-      throw new Error(`qBittorrent login failed: ${res.status} ${text}`);
-    }
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    const m = setCookie.match(/SID=([^;]+)/);
+    const text = (await res.text()).trim();
+
+    // Capture the session cookie if one was issued.
+    const setCookies =
+      typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+    const raw = setCookies.join("; ") || res.headers.get("set-cookie") || "";
+    const m = raw.match(/SID=([^;]+)/);
     if (m) this.sid = m[1];
-    // Some setups (localhost auth bypass) don't return a cookie — that's fine.
+
+    // qBittorrent returns 200 "Ok." (classic) or 204 No Content (newer builds) on
+    // success; only a "Fails." body or a non-2xx status is a real auth failure.
+    if (text === "Fails." || !res.ok) {
+      throw new Error(
+        `qBittorrent login failed: ${res.status} ${text || "(check username/password)"}`,
+      );
+    }
   }
 
   private async ensureAuth(): Promise<void> {
