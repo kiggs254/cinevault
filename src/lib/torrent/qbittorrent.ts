@@ -1,3 +1,6 @@
+import http from "node:http";
+import https from "node:https";
+
 /**
  * Minimal qBittorrent Web API (v2) client.
  * Auth via SID cookie; sets Referer/Origin to satisfy qBittorrent CSRF checks.
@@ -56,29 +59,66 @@ export class QbClient {
     return h;
   }
 
+  /**
+   * Login via Node's raw http/https. The framework-patched global `fetch` drops
+   * the Set-Cookie header, so we cannot read the SID session cookie through it;
+   * node:http exposes response headers verbatim. qBittorrent 5.x answers a
+   * successful login with 204 No Content (older builds: 200 "Ok.").
+   */
   async login(): Promise<void> {
-    const body = new URLSearchParams({ username: this.user, password: this.pass });
-    const res = await fetch(`${this.base}/api/v2/auth/login`, {
-      method: "POST",
-      headers: this.headers({ "Content-Type": "application/x-www-form-urlencoded" }),
-      body,
-    });
-    const text = (await res.text()).trim();
+    const url = new URL(`${this.base}/api/v2/auth/login`);
+    const lib = url.protocol === "https:" ? https : http;
+    const bodyStr = new URLSearchParams({
+      username: this.user,
+      password: this.pass,
+    }).toString();
 
-    // Capture the session cookie if one was issued.
-    const setCookies =
-      typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
-    const raw = setCookies.join("; ") || res.headers.get("set-cookie") || "";
-    const m = raw.match(/SID=([^;]+)/);
-    if (m) this.sid = m[1];
-
-    // qBittorrent returns 200 "Ok." (classic) or 204 No Content (newer builds) on
-    // success; only a "Fails." body or a non-2xx status is a real auth failure.
-    if (text === "Fails." || !res.ok) {
-      throw new Error(
-        `qBittorrent login failed: ${res.status} ${text || "(check username/password)"}`,
+    await new Promise<void>((resolve, reject) => {
+      const req = lib.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === "https:" ? 443 : 80),
+          path: url.pathname,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": Buffer.byteLength(bodyStr),
+            Referer: this.base,
+            Origin: this.origin(),
+          },
+        },
+        (res) => {
+          const sc = res.headers["set-cookie"];
+          const joined = Array.isArray(sc) ? sc.join("; ") : sc ?? "";
+          const m = joined.match(/SID=([^;]+)/);
+          if (m) this.sid = m[1];
+          let data = "";
+          res.on("data", (c) => (data += c));
+          res.on("end", () => {
+            const status = res.statusCode ?? 0;
+            const text = data.trim();
+            if (text === "Fails." || status >= 400) {
+              reject(
+                new Error(
+                  `qBittorrent login failed: ${status} ${text || "(check credentials)"}`,
+                ),
+              );
+            } else if (!this.sid) {
+              reject(
+                new Error(
+                  `qBittorrent login returned ${status} but issued no session cookie`,
+                ),
+              );
+            } else {
+              resolve();
+            }
+          });
+        },
       );
-    }
+      req.on("error", reject);
+      req.write(bodyStr);
+      req.end();
+    });
   }
 
   private async ensureAuth(): Promise<void> {

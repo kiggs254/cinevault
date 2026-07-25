@@ -47,10 +47,8 @@ export async function POST(req: Request) {
   try {
     switch (body.target) {
       case "qbit": {
-        const diag = await new QbClient(cfg.qbit).diagnose();
-        const attempts = (diag.attempts as Array<{ versionStatus: number }>) ?? [];
-        const ok = attempts.some((a) => a.versionStatus === 200);
-        return NextResponse.json({ ok, message: JSON.stringify(diag) });
+        const version = await new QbClient(cfg.qbit).version();
+        return NextResponse.json({ ok: true, message: `qBittorrent ${version}` });
       }
       case "prowlarr": {
         const ok = await new ProwlarrClient(cfg.prowlarr).health();
