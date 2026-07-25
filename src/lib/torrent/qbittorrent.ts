@@ -164,8 +164,24 @@ export class QbClient {
       body: form,
     });
     const text = (await res.text()).trim();
-    if (!res.ok || (text && text !== "Ok.")) {
+    if (!res.ok) {
       throw new Error(`qBittorrent add failed: ${res.status} ${text}`);
+    }
+    // qBittorrent 5.x returns 202 + JSON {success_count,pending_count,failure_count};
+    // older builds return 200 "Ok.". Accept unless the body reports only failures.
+    if (text.startsWith("{")) {
+      let j: { failure_count?: number; success_count?: number; pending_count?: number } = {};
+      try {
+        j = JSON.parse(text);
+      } catch {
+        /* leave defaults */
+      }
+      const accepted = (j.success_count ?? 0) + (j.pending_count ?? 0) > 0;
+      if (!accepted && (j.failure_count ?? 0) > 0) {
+        throw new Error(`qBittorrent rejected the torrent: ${text}`);
+      }
+    } else if (text.toLowerCase() === "fails.") {
+      throw new Error("qBittorrent rejected the torrent");
     }
   }
 
