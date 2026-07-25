@@ -199,6 +199,54 @@ export class QbClient {
     if (!res.ok) throw new Error(`qBittorrent unreachable: ${res.status}`);
     return (await res.text()).trim();
   }
+
+  /** Diagnostic: report exactly what /auth/login returns (status, cookie, version). */
+  async diagnose(): Promise<Record<string, unknown>> {
+    const attempt = async (
+      label: string,
+      extra: Record<string, string>,
+    ): Promise<Record<string, unknown>> => {
+      const body = new URLSearchParams({ username: this.user, password: this.pass });
+      const res = await fetch(`${this.base}/api/v2/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", ...extra },
+        body,
+      });
+      const text = (await res.text()).trim();
+      const sc =
+        typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+      const raw = sc.join("; ") || res.headers.get("set-cookie") || "";
+      const m = raw.match(/SID=([^;]+)/);
+      let versionStatus = 0;
+      let version = "";
+      try {
+        const vr = await fetch(`${this.base}/api/v2/app/version`, {
+          headers: m ? { Cookie: `SID=${m[1]}` } : {},
+        });
+        versionStatus = vr.status;
+        version = (await vr.text()).slice(0, 40);
+      } catch (e) {
+        version = (e as Error).message;
+      }
+      return {
+        label,
+        loginStatus: res.status,
+        loginBody: text.slice(0, 30),
+        gotCookie: !!m,
+        versionStatus,
+        version,
+      };
+    };
+    return {
+      base: this.base,
+      user: this.user,
+      passLen: this.pass.length,
+      attempts: [
+        await attempt("referer+origin", { Referer: this.base, Origin: this.origin() }),
+        await attempt("no-headers", {}),
+      ],
+    };
+  }
 }
 
 /** Extract the BitTorrent v1 info hash from a magnet URI, if present. */
