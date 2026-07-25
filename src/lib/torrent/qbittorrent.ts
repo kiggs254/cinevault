@@ -32,7 +32,7 @@ export class QbClient {
   private base: string;
   private user: string;
   private pass: string;
-  private sid?: string;
+  private cookie?: string; // full "name=value" of qBittorrent's session cookie
 
   constructor(cfg: QbConfig) {
     if (!cfg.url) throw new Error("qBittorrent URL is not configured");
@@ -55,7 +55,7 @@ export class QbClient {
       Origin: this.origin(),
       ...extra,
     };
-    if (this.sid) h["Cookie"] = `SID=${this.sid}`;
+    if (this.cookie) h["Cookie"] = this.cookie;
     return h;
   }
 
@@ -89,9 +89,10 @@ export class QbClient {
         },
         (res) => {
           const sc = res.headers["set-cookie"];
-          const joined = Array.isArray(sc) ? sc.join("; ") : sc ?? "";
-          const m = joined.match(/SID=([^;]+)/);
-          if (m) this.sid = m[1];
+          const arr = Array.isArray(sc) ? sc : sc ? [sc] : [];
+          // qBittorrent 5.x names the cookie QBT_SID_<port>; capture whatever it sets.
+          const session = arr.find((c) => /^QBT_SID/i.test(c)) ?? arr[0];
+          if (session) this.cookie = session.split(";")[0];
           let data = "";
           res.on("data", (c) => (data += c));
           res.on("end", () => {
@@ -103,7 +104,7 @@ export class QbClient {
                   `qBittorrent login failed: ${status} ${text || "(check credentials)"}`,
                 ),
               );
-            } else if (!this.sid) {
+            } else if (!this.cookie) {
               reject(
                 new Error(
                   `qBittorrent login returned ${status} but issued no session cookie`,
@@ -122,7 +123,7 @@ export class QbClient {
   }
 
   private async ensureAuth(): Promise<void> {
-    if (!this.sid && this.user) await this.login();
+    if (!this.cookie && this.user) await this.login();
   }
 
   async ensureCategory(category: string): Promise<void> {
@@ -176,7 +177,7 @@ export class QbClient {
     });
     if (res.status === 403) {
       // Session expired — re-login once.
-      this.sid = undefined;
+      this.cookie = undefined;
       await this.login();
       const retry = await fetch(`${this.base}/api/v2/torrents/info?${qs}`, {
         headers: this.headers(),
