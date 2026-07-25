@@ -1,0 +1,112 @@
+# MovieHub — full self-hosted stack for Coolify (or plain docker compose).
+# The `web` and `worker` services are built from the same image.
+
+services:
+  web:
+    build: .
+    command: sh -c "pnpm db:push && pnpm start"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://moviehub:${POSTGRES_PASSWORD:-moviehub}@postgres:5432/moviehub
+      REDIS_URL: redis://redis:6379
+      QBITTORRENT_URL: ${QBITTORRENT_URL:-http://qbittorrent:8080}
+      PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
+      DOWNLOAD_DIR: /data/downloads
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  worker:
+    build: .
+    # Ensure the shared staging dir is writable by qBittorrent (PUID 1000).
+    command: sh -c "mkdir -p /data/downloads && chmod 0777 /data/downloads && pnpm worker"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://moviehub:${POSTGRES_PASSWORD:-moviehub}@postgres:5432/moviehub
+      REDIS_URL: redis://redis:6379
+      QBITTORRENT_URL: ${QBITTORRENT_URL:-http://qbittorrent:8080}
+      PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
+      DOWNLOAD_DIR: /data/downloads
+    volumes:
+      - downloads:/data/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      web:
+        condition: service_started
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-UTC}
+      WEBUI_PORT: "8080"
+    volumes:
+      - qbit_config:/config
+      - downloads:/data/downloads
+    ports:
+      - "${QBIT_PORT:-8080}:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - prowlarr_config:/config
+    ports:
+      - "${PROWLARR_PORT:-9696}:9696"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: moviehub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moviehub}
+      POSTGRES_DB: moviehub
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moviehub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  pg_data:
+  redis_data:
+  downloads:
+  qbit_config:
+  prowlarr_config:

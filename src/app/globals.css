@@ -1,0 +1,258 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0b0d;
+  --color-surface: #131316;
+  --color-surface-2: #1a1a1f;
+  --color-elevated: #202027;
+  --color-border: rgba(245, 240, 230, 0.09);
+  --color-border-strong: rgba(245, 240, 230, 0.16);
+  --color-ink: #f3eee4;
+  --color-muted: #918b7d;
+  --color-faint: #605b51;
+  --color-accent: #e6a94e;
+  --color-accent-bright: #f4bd63;
+  --color-accent-soft: rgba(230, 169, 78, 0.13);
+  --color-success: #78cd8c;
+  --color-danger: #e26a5f;
+  --color-info: #6aa6e0;
+
+  --font-display: var(--font-bebas), "Impact", sans-serif;
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --radius: 0.85rem;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: var(--color-accent);
+    color: #1a1206;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border-radius: 99px;
+    border: 2px solid var(--color-bg);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted);
+  }
+}
+
+/* --- Atmosphere: projector glow + film grain ------------------------------ */
+.glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(60rem 40rem at 78% -10%, rgba(230, 169, 78, 0.10), transparent 60%),
+    radial-gradient(50rem 40rem at 0% 100%, rgba(106, 166, 224, 0.05), transparent 55%);
+}
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* --- Component primitives -------------------------------------------------- */
+@layer components {
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+  }
+  .panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 40%),
+      var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.6rem;
+    padding: 0.55rem 1rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    letter-spacing: 0.01em;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-accent {
+    background: var(--color-accent);
+    color: #1a1206;
+  }
+  .btn-accent:hover:not(:disabled) {
+    background: var(--color-accent-bright);
+    box-shadow: 0 0 0 1px var(--color-accent-bright), 0 8px 30px -8px rgba(230, 169, 78, 0.5);
+  }
+  .btn-ghost {
+    background: var(--color-surface-2);
+    color: var(--color-ink);
+    border: 1px solid var(--color-border);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-elevated);
+    border-color: var(--color-border-strong);
+  }
+  .input {
+    width: 100%;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.85rem;
+    color: var(--color-ink);
+    font-size: 0.9rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .input::placeholder {
+    color: var(--color-faint);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+  .label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--color-muted);
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 99px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--color-border);
+    color: var(--color-muted);
+    text-transform: uppercase;
+  }
+  .badge-accent {
+    background: var(--color-accent-soft);
+    border-color: rgba(230, 169, 78, 0.35);
+    color: var(--color-accent-bright);
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* --- Progress + motion ---------------------------------------------------- */
+.track {
+  position: relative;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-bright));
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.track-fill.active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.6s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  flex: none;
+}
+.dot-live {
+  box-shadow: 0 0 0 0 currentColor;
+  animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(120, 205, 140, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(120, 205, 140, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(120, 205, 140, 0);
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .track-fill,
+  .track-fill.active::after,
+  .dot-live {
+    animation: none !important;
+    transition: none !important;
+  }
+}

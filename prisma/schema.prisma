@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DownloadStatus {
+  QUEUED
+  SEARCHING
+  DOWNLOADING
+  UPLOADING
+  COMPLETED
+  FAILED
+  PAUSED
+  CANCELLED
+}
+
+enum MediaKind {
+  MOVIE
+  TV
+  MUSIC
+  SOFTWARE
+  OTHER
+}
+
+/// One row per download the app tracks, from search through S3 upload.
+model Download {
+  id              String         @id @default(cuid())
+  title           String // cleaned, human-friendly title
+  releaseName     String // original torrent/release name
+  kind            MediaKind      @default(OTHER)
+  year            Int?
+  season          Int?
+  episode         Int?
+  query           String? // the natural-language request that started it
+  indexer         String?
+  infoHash        String?
+  magnet          String?        @db.Text
+  status          DownloadStatus @default(QUEUED)
+  progress        Float          @default(0) // 0..100
+  sizeBytes       BigInt         @default(0)
+  downloadedBytes BigInt         @default(0)
+  dlSpeed         Int            @default(0) // bytes/sec
+  upSpeed         Int            @default(0) // bytes/sec
+  seeders         Int?
+  etaSeconds      Int?
+  s3Bucket        String?
+  s3Key           String?
+  s3Prefix        String?
+  posterUrl       String?
+  overview        String?        @db.Text
+  metadata        Json?
+  error           String?        @db.Text
+  qbitHash        String? // torrent hash inside qBittorrent
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  completedAt     DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// Single-row app configuration. Secrets are AES-256-GCM encrypted at rest.
+model AppConfig {
+  id        String   @id @default("singleton")
+  secrets   Json? // { moonshotApiKey, mimoApiKey, qbitPassword, prowlarrApiKey, s3SecretAccessKey, tmdbApiKey } — each value encrypted
+  settings  Json? // non-secret preferences + endpoints
+  updatedAt DateTime @updatedAt
+}

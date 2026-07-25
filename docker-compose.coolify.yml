@@ -1,0 +1,119 @@
+# MovieHub — Coolify deployment compose.
+# `web` is routed by Coolify's proxy via SERVICE_FQDN_WEB_3000 (no host port).
+# Secrets are injected by Coolify (env interpolation), never committed.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sh -c "pnpm db:push && pnpm start"
+    restart: unless-stopped
+    environment:
+      SERVICE_FQDN_WEB_3000: ${SERVICE_FQDN_WEB_3000}
+      NODE_ENV: production
+      APP_URL: ${APP_URL}
+      DATABASE_URL: postgresql://moviehub:${POSTGRES_PASSWORD}@postgres:5432/moviehub
+      REDIS_URL: redis://redis:6379
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      QBITTORRENT_URL: http://qbittorrent:8080
+      PROWLARR_URL: http://prowlarr:9696
+      DOWNLOAD_DIR: /data/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sh -c "mkdir -p /data/downloads && chmod 0777 /data/downloads && pnpm worker"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL}
+      DATABASE_URL: postgresql://moviehub:${POSTGRES_PASSWORD}@postgres:5432/moviehub
+      REDIS_URL: redis://redis:6379
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      QBITTORRENT_URL: http://qbittorrent:8080
+      PROWLARR_URL: http://prowlarr:9696
+      DOWNLOAD_DIR: /data/downloads
+    volumes:
+      - downloads:/data/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-UTC}
+      WEBUI_PORT: "8080"
+    volumes:
+      - qbit_config:/config
+      - downloads:/data/downloads
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - prowlarr_config:/config
+    ports:
+      - "9696:9696"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: moviehub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: moviehub
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moviehub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  pg_data:
+  redis_data:
+  downloads:
+  qbit_config:
+  prowlarr_config:
