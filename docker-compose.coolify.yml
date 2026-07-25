@@ -73,10 +73,10 @@ services:
     volumes:
       - qbit_config:/config
       - downloads:/data/downloads
-    ports:
-      - "8080:8080"
-      - "6881:6881"
-      - "6881:6881/udp"
+    # No host ports: reached internally as qbittorrent:8080 by web/worker.
+    # For the WebUI, assign a domain in Coolify (routes via the proxy).
+    expose:
+      - "8080"
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
@@ -87,8 +87,9 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - prowlarr_config:/config
-    ports:
-      - "9696:9696"
+    # No host ports: reached internally as prowlarr:9696 by web/worker.
+    expose:
+      - "9696"
 
   postgres:
     image: postgres:16-alpine
