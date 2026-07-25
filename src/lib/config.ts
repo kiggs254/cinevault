@@ -8,6 +8,7 @@ export interface ResolvedConfig {
   ai: {
     moonshot: { apiKey?: string; baseUrl: string; model: string };
     mimo: { apiKey?: string; baseUrl: string; model: string };
+    primary: "auto" | "moonshot" | "mimo";
   };
   qbit: { url?: string; user?: string; password?: string };
   prowlarr: { url?: string; apiKey?: string };
@@ -81,6 +82,9 @@ export async function getConfig(): Promise<ResolvedConfig> {
           "https://api.xiaomimimo.com/v1",
         model: str(settings.mimoModel) ?? env.MIMO_MODEL ?? "mimo-v2.5-pro",
       },
+      primary: ["auto", "moonshot", "mimo"].includes(String(settings.aiPrimary))
+        ? (settings.aiPrimary as "auto" | "moonshot" | "mimo")
+        : "auto",
     },
     qbit: {
       url: str(settings.qbitUrl) ?? env.QBITTORRENT_URL,

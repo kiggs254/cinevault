@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_SETTINGS = new Set([
+  "aiPrimary",
   "moonshotBaseUrl", "moonshotModel", "mimoBaseUrl", "mimoModel",
   "qbitUrl", "qbitUser",
   "prowlarrUrl",

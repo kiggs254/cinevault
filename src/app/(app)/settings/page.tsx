@@ -32,6 +32,7 @@ const SECTIONS: Section[] = [
       { k: "mimoApiKey", label: "MiMo API key", type: "secret" },
       { k: "mimoBaseUrl", label: "MiMo base URL", type: "url" },
       { k: "mimoModel", label: "MiMo model", type: "text", placeholder: "mimo-v2.5-pro" },
+      { k: "aiPrimary", label: "Primary provider (auto / moonshot / mimo)", type: "select", options: ["auto", "moonshot", "mimo"] },
     ],
   },
   {
@@ -87,6 +88,7 @@ const DEFAULTS: Settings = {
   mimoModel: "mimo-v2.5-pro",
   s3Region: "default",
   s3BasePrefix: "moviehub",
+  aiPrimary: "auto",
   preferredQuality: "1080p",
   minSeeders: 3,
   maxSizeGB: 25,

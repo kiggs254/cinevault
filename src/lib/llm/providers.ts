@@ -36,7 +36,14 @@ export function buildProviders(ai: ResolvedConfig["ai"]): {
 export async function providerFor(task: LlmTask): Promise<LlmProvider> {
   const cfg = await getConfig();
   const { moonshot, mimo } = buildProviders(cfg.ai);
-  const chosen = task === "reason" ? (moonshot ?? mimo) : (mimo ?? moonshot);
+
+  // "primary" forces a single provider for all tasks; "auto" routes reasoning
+  // to Moonshot and classification to MiMo, each falling back to the other.
+  let chosen: LlmProvider | undefined;
+  if (cfg.ai.primary === "mimo") chosen = mimo ?? moonshot;
+  else if (cfg.ai.primary === "moonshot") chosen = moonshot ?? mimo;
+  else chosen = task === "reason" ? (moonshot ?? mimo) : (mimo ?? moonshot);
+
   if (!chosen) {
     throw new Error(
       "No AI provider configured — add a Moonshot or MiMo API key in Settings.",
