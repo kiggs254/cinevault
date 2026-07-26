@@ -43,6 +43,7 @@ export async function GET(req: Request) {
 
   const d = await getTvDetails(cfg.tmdb.apiKey, id);
   if (!d) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const follow = await prisma.followedShow.findUnique({ where: { tmdbId: id }, select: { id: true } });
   const today = new Date().toISOString().slice(0, 10);
   const seasons = d.seasons.map((s) => {
     const ownedEps = epsBySeason.get(s.seasonNumber)?.size ?? 0;
@@ -55,5 +56,5 @@ export async function GET(req: Request) {
       ownedEpisodes: ownedEps,
     };
   });
-  return NextResponse.json({ details: { ...d, seasons } });
+  return NextResponse.json({ details: { ...d, seasons, followed: !!follow, followId: follow?.id ?? null } });
 }

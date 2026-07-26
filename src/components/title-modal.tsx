@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Plus, Tv, Film, Star, Play } from "lucide-react";
+import { X, Download, Loader2, Plus, Check, Tv, Film, Star, Play } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TrailerModal, type TrailerSeed } from "./trailer-modal";
 import { EpisodeBrowser } from "./episode-browser";
@@ -71,6 +71,8 @@ interface Details {
   numberOfEpisodes?: number | null;
   certification?: string | null;
   cast?: CastMember[] | null;
+  followed?: boolean;
+  followId?: string | null;
 }
 
 export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => void }) {
@@ -79,6 +81,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [following, setFollowing] = useState(false);
+  const [followId, setFollowId] = useState<string | null>(null);
   const [trailer, setTrailer] = useState<TrailerSeed | null>(null);
 
   useEffect(() => {
@@ -88,6 +91,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
       .then((d) => {
         if (!alive) return;
         setDetails(d.details);
+        setFollowId(d.details.followId ?? null);
       })
       .catch(() => setMsg("Couldn't load details."))
       .finally(() => alive && setLoading(false));
@@ -148,11 +152,22 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     });
   }
 
-  async function follow() {
+  async function toggleFollow() {
     setFollowing(true);
+    setMsg("");
     try {
-      await jsonFetch("/api/follows", { method: "POST", body: JSON.stringify({ tmdbId: seed.tmdbId }) });
-      setMsg("Following — new episodes auto-download the day after they air.");
+      if (followId) {
+        await jsonFetch(`/api/follows/${followId}`, { method: "DELETE" });
+        setFollowId(null);
+        setMsg("Unfollowed.");
+      } else {
+        const r = await jsonFetch<{ show: { id: string } }>("/api/follows", {
+          method: "POST",
+          body: JSON.stringify({ tmdbId: seed.tmdbId }),
+        });
+        setFollowId(r.show.id);
+        setMsg("Following — new episodes auto-download the day after they air.");
+      }
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -275,8 +290,19 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                 <>
                   <div className="mb-3 flex items-center justify-between">
                     <p className="label">Episodes</p>
-                    <button className="btn btn-ghost px-2 py-1 text-xs" onClick={follow} disabled={following}>
-                      {following ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Follow
+                    <button
+                      className={`btn px-2 py-1 text-xs ${followId ? "btn-accent" : "btn-ghost"}`}
+                      onClick={toggleFollow}
+                      disabled={following}
+                    >
+                      {following ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : followId ? (
+                        <Check size={13} />
+                      ) : (
+                        <Plus size={13} />
+                      )}
+                      {followId ? "Following" : "Follow"}
                     </button>
                   </div>
                   <EpisodeBrowser
