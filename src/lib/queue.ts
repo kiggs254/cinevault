@@ -59,7 +59,6 @@ const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "recover-stuck", every: 5 * MIN, jobId: "recover-stuck-repeat" },
-  { name: "watch-scan", every: 30 * MIN, jobId: "watch-scan-repeat" },
   { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
   { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
   { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },
@@ -69,6 +68,16 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
 /** Register all recurring maintenance jobs (idempotent by repeat jobId). */
 export async function schedulePeriodicJobs(): Promise<void> {
   const q = downloadQueue();
+  // Self-heal: drop any previously-scheduled repeatable that's no longer wanted
+  // (e.g. the retired watch-scan), so removing it from REPEATABLES actually stops it.
+  const wanted = new Set(REPEATABLES.map((r) => r.name));
+  try {
+    for (const j of await q.getRepeatableJobs()) {
+      if (!wanted.has(j.name)) await q.removeRepeatableByKey(j.key).catch(() => {});
+    }
+  } catch {
+    /* best-effort */
+  }
   for (const r of REPEATABLES) {
     await q.add(r.name, { downloadId: "" }, { repeat: { every: r.every }, jobId: r.jobId });
   }

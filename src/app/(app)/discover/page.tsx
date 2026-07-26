@@ -3,21 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Plus,
-  Trash2,
-  Download,
   X,
-  Rss,
   Search as SearchIcon,
   Loader2,
-  Save,
   Sparkles,
   Tv,
   Check,
-  Settings2,
   RefreshCw,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
-import { formatBytes } from "@/lib/util";
 import { useConfirm } from "@/components/confirm-dialog";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
 
@@ -58,33 +52,6 @@ interface TmdbHit {
   year?: number;
   posterUrl?: string;
 }
-interface Profile {
-  interests: string[];
-  autoGrabEnabled: boolean;
-  autoGrabThreshold: number;
-  legalIndexerIds: number[];
-}
-interface Indexer { id: number; name: string; privacy?: string }
-interface Watch {
-  id: string;
-  type: "SEARCH" | "RSS";
-  label: string;
-  query: string | null;
-  feedUrl: string | null;
-  kind: string;
-  autoGrab: boolean;
-  enabled: boolean;
-}
-interface FeedItem {
-  id: string;
-  title: string;
-  source: string | null;
-  size: number;
-  seeders: number | null;
-  matchScore: number;
-}
-
-const KINDS = ["TV", "MOVIE", "MUSIC", "SOFTWARE", "OTHER"];
 
 /* ------------------------------ component ----------------------------- */
 export default function DiscoverPage() {
@@ -100,23 +67,6 @@ export default function DiscoverPage() {
   const [followHits, setFollowHits] = useState<TmdbHit[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // Automation (advanced) state
-  const [showAutomation, setShowAutomation] = useState(false);
-  const [profile, setProfile] = useState<Profile>({
-    interests: [],
-    autoGrabEnabled: false,
-    autoGrabThreshold: 80,
-    legalIndexerIds: [],
-  });
-  const [indexers, setIndexers] = useState<Indexer[]>([]);
-  const [watches, setWatches] = useState<Watch[]>([]);
-  const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [interestInput, setInterestInput] = useState("");
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [wType, setWType] = useState<"SEARCH" | "RSS">("SEARCH");
-  const [wQuery, setWQuery] = useState("");
-  const [wFeed, setWFeed] = useState("");
-  const [wKind, setWKind] = useState("TV");
   const confirm = useConfirm();
   const [seed, setSeed] = useState<TitleSeed | null>(null);
   const [tab, setTab] = useState<"foryou" | "following">("foryou");
@@ -231,54 +181,6 @@ export default function DiscoverPage() {
       method: "PATCH",
       body: JSON.stringify({ autoDownload: !f.autoDownload }),
     }).catch(() => {});
-  }
-
-  /* ----------------------------- automation ---------------------------- */
-  const loadProfile = () => jsonFetch<{ profile: Profile }>("/api/profile").then((d) => setProfile(d.profile)).catch(() => {});
-  const loadIndexers = () => jsonFetch<{ indexers: Indexer[] }>("/api/indexers").then((d) => setIndexers(d.indexers)).catch(() => {});
-  const loadWatches = () => jsonFetch<{ watches: Watch[] }>("/api/watches").then((d) => setWatches(d.watches)).catch(() => {});
-  const loadFeed = () => jsonFetch<{ items: FeedItem[] }>("/api/feed").then((d) => setFeed(d.items)).catch(() => {});
-
-  function openAutomation() {
-    setShowAutomation((v) => {
-      if (!v) {
-        loadProfile();
-        loadIndexers();
-        loadWatches();
-        loadFeed();
-      }
-      return !v;
-    });
-  }
-  function addInterest() {
-    const v = interestInput.trim();
-    if (v) setProfile((p) => ({ ...p, interests: [...new Set([...p.interests, v])] }));
-    setInterestInput("");
-  }
-  async function saveProfile() {
-    setSavingProfile(true);
-    try {
-      const d = await jsonFetch<{ profile: Profile }>("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
-      setProfile(d.profile);
-      setMsg("Automation profile saved.");
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setSavingProfile(false);
-    }
-  }
-  async function addWatch() {
-    try {
-      await jsonFetch("/api/watches", {
-        method: "POST",
-        body: JSON.stringify({ type: wType, query: wQuery, feedUrl: wFeed, kind: wKind, autoGrab: true }),
-      });
-      setWQuery("");
-      setWFeed("");
-      loadWatches();
-    } catch (e) {
-      setMsg((e as Error).message);
-    }
   }
 
   /* ------------------------------- render ------------------------------ */
@@ -498,151 +400,6 @@ export default function DiscoverPage() {
         )}
       </section>
       )}
-
-      {/* Automation & sources (advanced, collapsed) */}
-      <section className="mt-10 border-t border-border pt-6">
-        <button className="flex items-center gap-2 text-sm text-muted hover:text-ink" onClick={openAutomation}>
-          <Settings2 size={15} /> Automation &amp; sources {showAutomation ? "▲" : "▼"}
-        </button>
-
-        {showAutomation && (
-          <div className="mt-5 grid gap-6 lg:grid-cols-2">
-            <div className="panel p-5">
-              <h3 className="mb-1 text-sm font-semibold text-ink">Keyword automation</h3>
-              <p className="mb-3 text-xs text-muted">
-                Auto-grab releases matching these interests from your allowed lawful indexers.
-              </p>
-              <div className="mb-2 flex flex-wrap gap-2">
-                {profile.interests.map((it) => (
-                  <span key={it} className="badge">
-                    {it}
-                    <button onClick={() => setProfile((p) => ({ ...p, interests: p.interests.filter((x) => x !== it) }))} className="ml-1 hover:text-danger">
-                      <X size={11} />
-                    </button>
-                  </span>
-                ))}
-                {profile.interests.length === 0 && <span className="text-xs text-faint">none</span>}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  className="input"
-                  placeholder="e.g. ubuntu, nasa, documentary"
-                  value={interestInput}
-                  onChange={(e) => setInterestInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addInterest();
-                    }
-                  }}
-                />
-                <button className="btn btn-ghost flex-none" onClick={addInterest}>
-                  <Plus size={15} />
-                </button>
-              </div>
-
-              <div className="mt-4 flex items-center justify-between">
-                <label className="label">Auto-grab high matches</label>
-                <input
-                  type="checkbox"
-                  checked={profile.autoGrabEnabled}
-                  onChange={() => setProfile((p) => ({ ...p, autoGrabEnabled: !p.autoGrabEnabled }))}
-                  className="accent-[color:var(--color-accent)]"
-                />
-              </div>
-
-              <label className="label mb-2 mt-4 block">Allowed indexers (lawful sources)</label>
-              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
-                {indexers.length === 0 && <p className="p-2 text-xs text-faint">No indexers — add lawful ones in Prowlarr.</p>}
-                {indexers.map((ix) => (
-                  <label key={ix.id} className="flex items-center gap-2 px-1 py-1 text-sm text-ink">
-                    <input
-                      type="checkbox"
-                      checked={profile.legalIndexerIds.includes(ix.id)}
-                      onChange={() =>
-                        setProfile((p) => ({
-                          ...p,
-                          legalIndexerIds: p.legalIndexerIds.includes(ix.id)
-                            ? p.legalIndexerIds.filter((x) => x !== ix.id)
-                            : [...p.legalIndexerIds, ix.id],
-                        }))
-                      }
-                      className="accent-[color:var(--color-accent)]"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{ix.name}</span>
-                    {ix.privacy && <span className="badge flex-none">{ix.privacy}</span>}
-                  </label>
-                ))}
-              </div>
-              <button className="btn btn-accent mt-4 w-full" onClick={saveProfile} disabled={savingProfile}>
-                {savingProfile ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save
-              </button>
-            </div>
-
-            <div className="panel p-5">
-              <h3 className="mb-1 text-sm font-semibold text-ink">Watchlist (search / RSS)</h3>
-              <p className="mb-3 text-xs text-muted">Track a query or a lawful torrent/RSS feed; new items auto-grab.</p>
-              <div className="mb-2 flex gap-2">
-                <button className={`btn flex-1 ${wType === "SEARCH" ? "btn-accent" : "btn-ghost"}`} onClick={() => setWType("SEARCH")}>
-                  <SearchIcon size={14} /> Search
-                </button>
-                <button className={`btn flex-1 ${wType === "RSS" ? "btn-accent" : "btn-ghost"}`} onClick={() => setWType("RSS")}>
-                  <Rss size={14} /> RSS
-                </button>
-              </div>
-              {wType === "SEARCH" ? (
-                <input className="input mb-2" placeholder="Query to track" value={wQuery} onChange={(e) => setWQuery(e.target.value)} />
-              ) : (
-                <input className="input mb-2" placeholder="Feed URL" value={wFeed} onChange={(e) => setWFeed(e.target.value)} />
-              )}
-              <div className="mb-2 flex gap-2">
-                <select className="input w-32" value={wKind} onChange={(e) => setWKind(e.target.value)}>
-                  {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-                </select>
-                <button className="btn btn-ghost flex-1" onClick={addWatch}><Plus size={15} /> Add watch</button>
-              </div>
-              <div className="mt-3 space-y-2">
-                {watches.map((w) => (
-                  <div key={w.id} className="card flex items-center gap-2 p-2.5">
-                    {w.type === "RSS" ? <Rss size={14} className="flex-none text-accent" /> : <SearchIcon size={14} className="flex-none text-accent" />}
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{w.label}</span>
-                    <button
-                      className="flex-none text-faint hover:text-danger"
-                      onClick={async () => {
-                        if (await confirm({ title: "Delete watch?", message: `“${w.label}” will stop being tracked.`, confirmLabel: "Delete" })) {
-                          await fetch(`/api/watches/${w.id}`, { method: "DELETE" });
-                          loadWatches();
-                        }
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              {feed.length > 0 && (
-                <>
-                  <h4 className="label mb-2 mt-4">What&apos;s new</h4>
-                  <div className="space-y-1.5">
-                    {feed.slice(0, 8).map((f) => (
-                      <div key={f.id} className="card flex items-center gap-2 p-2.5">
-                        <span className="min-w-0 flex-1 truncate text-xs text-ink" title={f.title}>{f.title}</span>
-                        <span className="mono flex-none text-[11px] text-faint">{formatBytes(f.size)}</span>
-                        <button
-                          className="flex-none text-faint hover:text-accent"
-                          onClick={async () => { setFeed((x) => x.filter((y) => y.id !== f.id)); await fetch(`/api/feed/${f.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "download" }) }); }}
-                        >
-                          <Download size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
 
       {seed && <TitleModal seed={seed} onClose={() => setSeed(null)} />}
     </div>
