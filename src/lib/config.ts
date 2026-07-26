@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { boolEnv, env } from "./env";
 import { encrypt, safeDecrypt } from "./crypto";
+import type { TasteProfile } from "./types";
 
 /** Fully-resolved runtime configuration (DB overrides env defaults). */
 export interface ResolvedConfig {
@@ -35,6 +36,11 @@ export interface ResolvedConfig {
     autoGrabThreshold: number;
     legalIndexerIds: number[];
   };
+  jellyfin: { url?: string; apiKey?: string; userId?: string };
+  telegram: { botToken?: string; chatId?: string };
+  retention: { autoDeleteWatched: boolean; days: number };
+  discovery: { autoFollowFromJellyfin: boolean };
+  tasteProfile: TasteProfile | null;
 }
 
 /** Keys that must be encrypted at rest. */
@@ -45,6 +51,8 @@ const SECRET_KEYS = [
   "prowlarrApiKey",
   "s3SecretAccessKey",
   "tmdbApiKey",
+  "jellyfinApiKey",
+  "telegramBotToken",
 ] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -131,6 +139,23 @@ export async function getConfig(): Promise<ResolvedConfig> {
         ? (settings.legalIndexerIds as unknown[]).map(Number).filter((n) => !Number.isNaN(n))
         : [],
     },
+    jellyfin: {
+      url: str(settings.jellyfinUrl) ?? env.JELLYFIN_URL,
+      apiKey: dec("jellyfinApiKey") ?? env.JELLYFIN_API_KEY,
+      userId: str(settings.jellyfinUserId) ?? env.JELLYFIN_USER_ID,
+    },
+    telegram: {
+      botToken: dec("telegramBotToken") ?? env.TELEGRAM_BOT_TOKEN,
+      chatId: str(settings.telegramChatId) ?? env.TELEGRAM_CHAT_ID,
+    },
+    retention: {
+      autoDeleteWatched: settings.autoDeleteWatched === true,
+      days: num(settings.retentionDays, 30),
+    },
+    discovery: {
+      autoFollowFromJellyfin: settings.autoFollowFromJellyfin !== false, // default on
+    },
+    tasteProfile: (settings.tasteProfile as TasteProfile | undefined) ?? null,
   };
 }
 
@@ -147,6 +172,8 @@ export async function getMaskedConfig() {
     prowlarrApiKey: !!env.PROWLARR_API_KEY,
     s3SecretAccessKey: !!env.S3_SECRET_ACCESS_KEY,
     tmdbApiKey: !!env.TMDB_API_KEY,
+    jellyfinApiKey: !!env.JELLYFIN_API_KEY,
+    telegramBotToken: !!env.TELEGRAM_BOT_TOKEN,
   };
   const secretsSet = Object.fromEntries(
     SECRET_KEYS.map((k) => [k, !!secrets[k] || envSecretPresent[k]]),

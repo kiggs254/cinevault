@@ -32,18 +32,39 @@ export async function enqueueDownload(downloadId: string): Promise<void> {
 
 /** Trigger a one-off watch/discovery scan now. */
 export async function enqueueScan(): Promise<void> {
+  await enqueueJob("watch-scan");
+}
+
+/** Trigger any named maintenance job once, now. */
+export async function enqueueJob(
+  name: "watch-scan" | "follow-scan" | "reco-refresh" | "auto-follow" | "retention",
+): Promise<void> {
   await downloadQueue().add(
-    "watch-scan",
+    name,
     { downloadId: "" },
     { removeOnComplete: true, removeOnFail: true },
   );
 }
 
-/** Register the recurring watch/discovery scan (idempotent by repeat jobId). */
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+const REPEATABLES: { name: string; every: number; jobId: string }[] = [
+  { name: "watch-scan", every: 30 * MIN, jobId: "watch-scan-repeat" },
+  { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
+  { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
+  { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },
+  { name: "retention", every: 24 * HOUR, jobId: "retention-repeat" },
+];
+
+/** Register all recurring maintenance jobs (idempotent by repeat jobId). */
+export async function schedulePeriodicJobs(): Promise<void> {
+  const q = downloadQueue();
+  for (const r of REPEATABLES) {
+    await q.add(r.name, { downloadId: "" }, { repeat: { every: r.every }, jobId: r.jobId });
+  }
+}
+
+/** Backwards-compatible alias — schedules all recurring jobs. */
 export async function scheduleScans(): Promise<void> {
-  await downloadQueue().add(
-    "watch-scan",
-    { downloadId: "" },
-    { repeat: { every: 30 * 60 * 1000 }, jobId: "watch-scan-repeat" },
-  );
+  await schedulePeriodicJobs();
 }

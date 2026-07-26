@@ -2,8 +2,13 @@ import "dotenv/config";
 import path from "node:path";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE, enqueueDownload, scheduleScans } from "../lib/queue";
+import { DOWNLOAD_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
 import { scanWatches } from "../lib/service/watches";
+import { scanFollowedShows, autoFollowFromJellyfin } from "../lib/service/follows";
+import { refreshRecommendations } from "../lib/service/recommendations";
+import { runRetention } from "../lib/service/retention";
+import { startTelegramBot } from "../lib/telegram/bot";
+import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
@@ -210,26 +215,41 @@ async function processDownload(id: string): Promise<void> {
       episode: organized.episode ?? dl.episode,
       posterUrl: meta?.posterUrl ?? dl.posterUrl,
       overview: meta?.overview ?? dl.overview,
+      tmdbId: meta?.tmdbId ?? dl.tmdbId,
       sizeBytes: BigInt(Math.max(0, Math.round(bytes || Number(dl.sizeBytes)))),
       completedAt: new Date(),
     },
   });
   await publishProgress({ type: "status", downloadId: id, status: "COMPLETED", progress: 100 });
+  const seLabel =
+    organized.season != null
+      ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
+      : "";
+  await notify(`✅ Download complete: ${organized.cleanTitle}${seLabel}`);
 
   if (cfg.prefs.deleteAfterUpload) {
     await qb.delete([info.hash], true).catch(() => {});
   }
 }
 
+const MAINTENANCE: Record<string, () => Promise<unknown>> = {
+  "watch-scan": scanWatches,
+  "follow-scan": scanFollowedShows,
+  "reco-refresh": refreshRecommendations,
+  "auto-follow": autoFollowFromJellyfin,
+  retention: runRetention,
+};
+
 const worker = new Worker<DownloadJobData>(
   DOWNLOAD_QUEUE,
   async (job: Job<DownloadJobData>) => {
-    if (job.name === "watch-scan") {
+    const maintenance = MAINTENANCE[job.name];
+    if (maintenance) {
       try {
-        const s = await scanWatches();
-        console.log(`[worker] scan complete: ${JSON.stringify(s)}`);
+        const s = await maintenance();
+        console.log(`[worker] ${job.name}: ${JSON.stringify(s)}`);
       } catch (e) {
-        console.error("[worker] scan error:", (e as Error).message);
+        console.error(`[worker] ${job.name} error:`, (e as Error).message);
       }
       return;
     }
@@ -277,9 +297,11 @@ async function recoverInterrupted(): Promise<void> {
 worker.on("ready", () => {
   console.log("[worker] ready, waiting for jobs");
   void recoverInterrupted();
-  void scheduleScans()
-    .then(() => console.log("[worker] watch scans scheduled (every 30m)"))
+  void schedulePeriodicJobs()
+    .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))
     .catch(() => {});
+  startTelegramBot();
+  console.log("[worker] telegram bot poller started");
 });
 worker.on("error", (err) => console.error("[worker] error:", err));
 

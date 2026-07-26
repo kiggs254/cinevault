@@ -4,6 +4,7 @@ import { QbClient } from "@/lib/torrent/qbittorrent";
 import { ProwlarrClient } from "@/lib/indexers/prowlarr";
 import { bucketReachable, makeS3 } from "@/lib/storage/s3";
 import { providerFor } from "@/lib/llm/providers";
+import { tgApi, sendMessage } from "@/lib/telegram/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +16,12 @@ const ALLOWED_SETTINGS = new Set([
   "prowlarrUrl",
   "s3Endpoint", "s3Region", "s3Bucket", "s3AccessKeyId", "s3PublicUrl", "s3BasePrefix",
   "preferredQuality", "minSeeders", "maxSizeGB", "deleteAfterUpload",
+  "jellyfinUrl", "jellyfinUserId", "telegramChatId",
+  "autoDeleteWatched", "retentionDays", "autoFollowFromJellyfin",
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
+  "jellyfinApiKey", "telegramBotToken",
 ]);
 
 export async function GET() {
@@ -34,6 +38,9 @@ export async function PUT(req: Request) {
   if ("minSeeders" in patch) patch.minSeeders = Number(patch.minSeeders) || 0;
   if ("maxSizeGB" in patch) patch.maxSizeGB = Number(patch.maxSizeGB) || 0;
   if ("deleteAfterUpload" in patch) patch.deleteAfterUpload = Boolean(patch.deleteAfterUpload);
+  if ("autoDeleteWatched" in patch) patch.autoDeleteWatched = Boolean(patch.autoDeleteWatched);
+  if ("autoFollowFromJellyfin" in patch) patch.autoFollowFromJellyfin = Boolean(patch.autoFollowFromJellyfin);
+  if ("retentionDays" in patch) patch.retentionDays = Math.max(1, Number(patch.retentionDays) || 30);
 
   await saveConfig(patch);
   const config = await getMaskedConfig();
@@ -70,6 +77,26 @@ export async function POST(req: Request) {
           max_tokens: 1,
         });
         return NextResponse.json({ ok: true, message: `${p.name} (${p.model}) reachable` });
+      }
+      case "jellyfin": {
+        if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) throw new Error("Jellyfin URL + API key required");
+        const base = cfg.jellyfin.url.replace(/\/+$/, "");
+        const res = await fetch(`${base}/System/Info?api_key=${cfg.jellyfin.apiKey}`);
+        if (!res.ok) throw new Error(`Jellyfin returned ${res.status}`);
+        const info = (await res.json()) as { Version?: string; ServerName?: string };
+        return NextResponse.json({ ok: true, message: `${info.ServerName ?? "Jellyfin"} ${info.Version ?? ""}`.trim() });
+      }
+      case "telegram": {
+        if (!cfg.telegram.botToken) throw new Error("Bot token required");
+        const me = await tgApi<{ username?: string }>(cfg.telegram.botToken, "getMe");
+        if (!me) throw new Error("Invalid bot token");
+        if (cfg.telegram.chatId) {
+          await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, "✅ MovieHub is connected to this chat.");
+        }
+        return NextResponse.json({
+          ok: true,
+          message: `Bot @${me.username}${cfg.telegram.chatId ? " — test message sent" : " — now message the bot to link your chat"}`,
+        });
       }
       default:
         return NextResponse.json({ error: "Unknown target" }, { status: 400 });

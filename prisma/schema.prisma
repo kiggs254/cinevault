@@ -55,12 +55,16 @@ model Download {
   metadata        Json?
   error           String?        @db.Text
   qbitHash        String? // torrent hash inside qBittorrent
+  tmdbId          Int? // links a release to its TMDB title (for follows + retention)
+  watchedAt       DateTime? // set when Jellyfin reports the media as played
+  s3DeletedAt     DateTime? // set when retention removed the file from S3
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   completedAt     DateTime?
 
   @@index([status])
   @@index([createdAt])
+  @@index([tmdbId])
 }
 
 /// Single-row app configuration. Secrets are AES-256-GCM encrypted at rest.
@@ -128,4 +132,45 @@ model FeedItem {
 
   @@index([status])
   @@index([createdAt])
+}
+
+/// A TV show the user follows. The scheduler resolves its TMDB episode list and
+/// auto-downloads aired episodes not yet in the library, from lawful indexers.
+model FollowedShow {
+  id            String    @id @default(cuid())
+  tmdbId        Int       @unique
+  title         String
+  year          Int?
+  posterUrl     String?
+  overview      String?   @db.Text
+  status        String? // TMDB series status: "Returning Series" | "Ended" | ...
+  autoDownload  Boolean   @default(true)
+  quality       String    @default("any")
+  source        String    @default("manual") // manual | jellyfin | reco
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([autoDownload])
+}
+
+/// A cached, personalized suggestion (a TMDB title, not a release). Surfaced in
+/// the redesigned Discover feed; the user can add (download/follow) or dismiss.
+model Recommendation {
+  id        String   @id @default(cuid())
+  tmdbId    Int
+  mediaType String // "movie" | "tv"
+  title     String
+  year      Int?
+  posterUrl String?
+  overview  String?  @db.Text
+  reason    String?  @db.Text // AI: "because you finished Dexter…"
+  score     Int      @default(0)
+  source    String? // similar:<id> | trending | genre:<id>
+  status    String   @default("new") // new | dismissed | added
+  createdAt DateTime @default(now())
+
+  @@unique([tmdbId, mediaType])
+  @@index([status])
+  @@index([score])
 }

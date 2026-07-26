@@ -80,6 +80,7 @@ export interface CreateDownloadInput {
   year?: number | null;
   season?: number | null;
   episode?: number | null;
+  tmdbId?: number | null;
   query?: string | null;
 }
 
@@ -101,6 +102,7 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
       year: input.year ?? null,
       season: input.season ?? null,
       episode: input.episode ?? null,
+      tmdbId: input.tmdbId ?? null,
       query: input.query ?? null,
       indexer: input.indexer ?? null,
       infoHash: infoHash ?? null,

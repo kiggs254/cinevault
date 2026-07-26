@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Compass,
-  RefreshCw,
   Plus,
   Trash2,
   Download,
@@ -12,17 +10,58 @@ import {
   Search as SearchIcon,
   Loader2,
   Save,
+  Sparkles,
+  Tv,
+  Check,
+  Settings2,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 
+/* ------------------------------- types -------------------------------- */
+interface Taste {
+  summary?: string;
+  favoriteGenres?: string[];
+  keywords?: string[];
+  updatedAt?: string;
+}
+interface Rec {
+  id: string;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  overview: string | null;
+  reason: string | null;
+  score: number;
+}
+interface Follow {
+  id: string;
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  status: string | null;
+  autoDownload: boolean;
+  quality: string;
+  source: string;
+  lastCheckedAt: string | null;
+}
+interface TmdbHit {
+  tmdbId: number;
+  mediaType: string;
+  title: string;
+  year?: number;
+  posterUrl?: string;
+}
 interface Profile {
   interests: string[];
   autoGrabEnabled: boolean;
   autoGrabThreshold: number;
   legalIndexerIds: number[];
 }
-interface Indexer { id: number; name: string; privacy?: string; enable?: boolean }
+interface Indexer { id: number; name: string; privacy?: string }
 interface Watch {
   id: string;
   type: "SEARCH" | "RSS";
@@ -32,22 +71,34 @@ interface Watch {
   kind: string;
   autoGrab: boolean;
   enabled: boolean;
-  lastRunAt: string | null;
 }
 interface FeedItem {
   id: string;
   title: string;
   source: string | null;
-  kind: string;
   size: number;
   seeders: number | null;
   matchScore: number;
-  status: string;
 }
 
 const KINDS = ["TV", "MOVIE", "MUSIC", "SOFTWARE", "OTHER"];
 
+/* ------------------------------ component ----------------------------- */
 export default function DiscoverPage() {
+  const [recs, setRecs] = useState<Rec[]>([]);
+  const [taste, setTaste] = useState<Taste | null>(null);
+  const [hasTmdb, setHasTmdb] = useState(true);
+  const [hasJellyfin, setHasJellyfin] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const [follows, setFollows] = useState<Follow[]>([]);
+  const [followQ, setFollowQ] = useState("");
+  const [followHits, setFollowHits] = useState<TmdbHit[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  // Automation (advanced) state
+  const [showAutomation, setShowAutomation] = useState(false);
   const [profile, setProfile] = useState<Profile>({
     interests: [],
     autoGrabEnabled: false,
@@ -59,384 +110,472 @@ export default function DiscoverPage() {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [interestInput, setInterestInput] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [msg, setMsg] = useState("");
-
   const [wType, setWType] = useState<"SEARCH" | "RSS">("SEARCH");
   const [wQuery, setWQuery] = useState("");
   const [wFeed, setWFeed] = useState("");
-  const [wLabel, setWLabel] = useState("");
   const [wKind, setWKind] = useState("TV");
-  const [adding, setAdding] = useState(false);
 
+  const loadRecs = useCallback(
+    () =>
+      jsonFetch<{ recommendations: Rec[]; taste: Taste | null; hasTmdb: boolean; hasJellyfin: boolean }>(
+        "/api/recommendations",
+      )
+        .then((d) => {
+          setRecs(d.recommendations);
+          setTaste(d.taste);
+          setHasTmdb(d.hasTmdb);
+          setHasJellyfin(d.hasJellyfin);
+        })
+        .catch(() => {}),
+    [],
+  );
+  const loadFollows = useCallback(
+    () => jsonFetch<{ shows: Follow[] }>("/api/follows").then((d) => setFollows(d.shows)).catch(() => {}),
+    [],
+  );
+
+  useEffect(() => {
+    loadRecs();
+    loadFollows();
+  }, [loadRecs, loadFollows]);
+
+  async function refreshRecs() {
+    setRefreshing(true);
+    setMsg("Rebuilding your recommendations — reading watch history, asking the AI…");
+    try {
+      await jsonFetch("/api/recommendations", { method: "POST" });
+      // Poll for the worker to finish.
+      let tries = 0;
+      const before = recs.length;
+      const poll = setInterval(async () => {
+        tries++;
+        await loadRecs();
+        const d = await jsonFetch<{ recommendations: Rec[] }>("/api/recommendations");
+        if (d.recommendations.length !== before || tries > 20) {
+          clearInterval(poll);
+          setRefreshing(false);
+          setMsg(d.recommendations.length ? "" : "No recommendations yet — watch or download something first, then refresh.");
+        }
+      }, 3000);
+    } catch (e) {
+      setMsg((e as Error).message);
+      setRefreshing(false);
+    }
+  }
+
+  async function recAction(r: Rec, action: "add" | "download" | "dismiss") {
+    setRecs((cur) => cur.filter((x) => x.id !== r.id));
+    try {
+      const res = await jsonFetch<{ kind?: string }>(`/api/recommendations/${r.id}`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      if (action !== "dismiss") {
+        setMsg(res.kind === "follow" ? `Following “${r.title}” — new episodes will auto-download.` : `Queued “${r.title}”.`);
+        if (res.kind === "follow") loadFollows();
+      }
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+
+  async function doFollowSearch(q: string) {
+    setFollowQ(q);
+    if (!q.trim()) {
+      setFollowHits([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const d = await jsonFetch<{ results: TmdbHit[] }>(`/api/tmdb/search?type=tv&q=${encodeURIComponent(q)}`);
+      setFollowHits(d.results);
+    } catch {
+      setFollowHits([]);
+    } finally {
+      setSearching(false);
+    }
+  }
+  async function follow(tmdbId: number, title: string) {
+    setFollowHits([]);
+    setFollowQ("");
+    try {
+      await jsonFetch("/api/follows", { method: "POST", body: JSON.stringify({ tmdbId }) });
+      setMsg(`Following “${title}”. I'll grab new episodes the day after they air.`);
+      loadFollows();
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+  async function unfollow(id: string) {
+    setFollows((f) => f.filter((x) => x.id !== id));
+    await fetch(`/api/follows/${id}`, { method: "DELETE" }).catch(() => {});
+  }
+  async function toggleAuto(f: Follow) {
+    setFollows((cur) => cur.map((x) => (x.id === f.id ? { ...x, autoDownload: !x.autoDownload } : x)));
+    await jsonFetch(`/api/follows/${f.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ autoDownload: !f.autoDownload }),
+    }).catch(() => {});
+  }
+
+  /* ----------------------------- automation ---------------------------- */
   const loadProfile = () => jsonFetch<{ profile: Profile }>("/api/profile").then((d) => setProfile(d.profile)).catch(() => {});
   const loadIndexers = () => jsonFetch<{ indexers: Indexer[] }>("/api/indexers").then((d) => setIndexers(d.indexers)).catch(() => {});
   const loadWatches = () => jsonFetch<{ watches: Watch[] }>("/api/watches").then((d) => setWatches(d.watches)).catch(() => {});
   const loadFeed = () => jsonFetch<{ items: FeedItem[] }>("/api/feed").then((d) => setFeed(d.items)).catch(() => {});
 
-  useEffect(() => {
-    loadProfile();
-    loadIndexers();
-    loadWatches();
-    loadFeed();
-  }, []);
-
+  function openAutomation() {
+    setShowAutomation((v) => {
+      if (!v) {
+        loadProfile();
+        loadIndexers();
+        loadWatches();
+        loadFeed();
+      }
+      return !v;
+    });
+  }
   function addInterest() {
     const v = interestInput.trim();
-    if (!v || profile.interests.includes(v)) return;
-    setProfile((p) => ({ ...p, interests: [...p.interests, v] }));
+    if (v) setProfile((p) => ({ ...p, interests: [...new Set([...p.interests, v])] }));
     setInterestInput("");
   }
-  function removeInterest(v: string) {
-    setProfile((p) => ({ ...p, interests: p.interests.filter((x) => x !== v) }));
-  }
-  function toggleIndexer(id: number) {
-    setProfile((p) => ({
-      ...p,
-      legalIndexerIds: p.legalIndexerIds.includes(id)
-        ? p.legalIndexerIds.filter((x) => x !== id)
-        : [...p.legalIndexerIds, id],
-    }));
-  }
-
   async function saveProfile() {
     setSavingProfile(true);
-    setMsg("");
     try {
-      const d = await jsonFetch<{ profile: Profile }>("/api/profile", {
-        method: "PUT",
-        body: JSON.stringify(profile),
-      });
+      const d = await jsonFetch<{ profile: Profile }>("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
       setProfile(d.profile);
-      setMsg("Profile saved.");
+      setMsg("Automation profile saved.");
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
       setSavingProfile(false);
     }
   }
-
   async function addWatch() {
-    setAdding(true);
-    setMsg("");
     try {
       await jsonFetch("/api/watches", {
         method: "POST",
-        body: JSON.stringify({
-          type: wType,
-          label: wLabel,
-          query: wQuery,
-          feedUrl: wFeed,
-          kind: wKind,
-          autoGrab: true,
-        }),
+        body: JSON.stringify({ type: wType, query: wQuery, feedUrl: wFeed, kind: wKind, autoGrab: true }),
       });
       setWQuery("");
       setWFeed("");
-      setWLabel("");
-      await loadWatches();
-      setMsg("Watch added — it will be scanned shortly.");
+      loadWatches();
     } catch (e) {
       setMsg((e as Error).message);
-    } finally {
-      setAdding(false);
     }
   }
 
-  async function patchWatch(id: string, patch: Partial<Watch>) {
-    await jsonFetch(`/api/watches/${id}`, { method: "PUT", body: JSON.stringify(patch) }).catch(() => {});
-    loadWatches();
-  }
-  async function deleteWatch(id: string) {
-    await fetch(`/api/watches/${id}`, { method: "DELETE" }).catch(() => {});
-    loadWatches();
-  }
-
-  async function scanNow() {
-    setScanning(true);
-    setMsg("");
-    try {
-      await jsonFetch("/api/watches/scan", { method: "POST" });
-      setMsg("Scan queued — new items appear in the feed within a minute. Hit Refresh.");
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setTimeout(() => setScanning(false), 1500);
-    }
-  }
-
-  async function feedAction(id: string, action: "download" | "dismiss") {
-    setFeed((f) => f.filter((x) => x.id !== id));
-    await fetch(`/api/feed/${id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    }).catch(() => {});
-  }
-
+  /* ------------------------------- render ------------------------------ */
   return (
-    <div className="mx-auto max-w-5xl px-5 py-8 md:px-10">
+    <div className="mx-auto max-w-6xl px-5 py-8 md:px-10">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
-          <p className="label">Automation</p>
+          <p className="label">For you</p>
           <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
             Discover
           </h1>
         </div>
-        <div className="flex items-center gap-2">
-          <button className="btn btn-ghost" onClick={loadFeed}>
-            <RefreshCw size={15} /> Refresh
-          </button>
-          <button className="btn btn-accent" onClick={scanNow} disabled={scanning}>
-            {scanning ? <Loader2 size={15} className="animate-spin" /> : <Compass size={15} />} Scan now
-          </button>
-        </div>
+        <button className="btn btn-accent" onClick={refreshRecs} disabled={refreshing}>
+          {refreshing ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Refresh picks
+        </button>
       </header>
 
       {msg && <p className="mb-4 text-sm text-muted">{msg}</p>}
 
-      <p className="mb-6 rounded-lg border border-border bg-surface p-3 text-xs text-muted">
-        Automation only searches the indexers you allow below and the feeds you add — keep it to
-        <span className="text-ink"> lawful sources you&apos;re entitled to use</span> (Linux Tracker,
-        Internet Archive, Creative-Commons, public-domain, academic).
-      </p>
+      {!hasTmdb && (
+        <p className="mb-6 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
+          Add a <span className="text-ink">TMDB API key</span> in Settings to turn on personalized recommendations.
+        </p>
+      )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Taste profile */}
-        <section className="panel p-5">
-          <h2 className="mb-1 text-lg font-semibold text-ink">Taste profile</h2>
-          <p className="mb-4 text-xs text-muted">
-            Interests used to rank the feed and auto-grab high matches.
-          </p>
-
-          <label className="label mb-1.5 block">Interests</label>
-          <div className="mb-2 flex flex-wrap gap-2">
-            {profile.interests.map((it) => (
-              <span key={it} className="badge">
-                {it}
-                <button onClick={() => removeInterest(it)} className="ml-1 hover:text-danger">
-                  <X size={11} />
-                </button>
-              </span>
-            ))}
-            {profile.interests.length === 0 && <span className="text-xs text-faint">none yet</span>}
+      {/* Taste banner */}
+      {taste?.summary && (
+        <section className="panel mb-6 p-5">
+          <div className="mb-2 flex items-center gap-2">
+            <Sparkles size={15} className="text-accent" />
+            <h2 className="text-sm font-semibold text-ink">Your taste</h2>
+            {!hasJellyfin && <span className="badge">connect Jellyfin for better picks</span>}
           </div>
-          <div className="flex gap-2">
-            <input
-              className="input"
-              placeholder="e.g. ubuntu, blender, nasa, documentary"
-              value={interestInput}
-              onChange={(e) => setInterestInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addInterest())}
-            />
-            <button className="btn btn-ghost flex-none" onClick={addInterest}>
-              <Plus size={15} />
-            </button>
-          </div>
-
-          <div className="mt-5 flex items-center justify-between">
-            <label className="label">Auto-grab matches</label>
-            <button
-              type="button"
-              onClick={() => setProfile((p) => ({ ...p, autoGrabEnabled: !p.autoGrabEnabled }))}
-              className="flex items-center gap-2 text-sm text-ink"
-            >
-              <span
-                className="relative h-6 w-11 rounded-full transition-colors"
-                style={{ background: profile.autoGrabEnabled ? "var(--color-accent)" : "var(--color-surface-2)" }}
-              >
-                <span
-                  className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform"
-                  style={{ transform: profile.autoGrabEnabled ? "translateX(22px)" : "translateX(2px)" }}
-                />
-              </span>
-              {profile.autoGrabEnabled ? "On" : "Off"}
-            </button>
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            <label className="label flex-none">Threshold</label>
-            <input
-              type="range"
-              min={50}
-              max={100}
-              value={profile.autoGrabThreshold}
-              onChange={(e) => setProfile((p) => ({ ...p, autoGrabThreshold: Number(e.target.value) }))}
-              className="flex-1 accent-[color:var(--color-accent)]"
-            />
-            <span className="mono w-12 text-right text-sm text-ink">{profile.autoGrabThreshold}%</span>
-          </div>
-
-          <label className="label mb-2 mt-5 block">Allowed indexers (lawful sources)</label>
-          <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
-            {indexers.length === 0 && (
-              <p className="p-2 text-xs text-faint">
-                No indexers found — add lawful ones in Prowlarr first.
-              </p>
-            )}
-            {indexers.map((ix) => (
-              <label key={ix.id} className="flex items-center gap-2 px-1 py-1 text-sm text-ink">
-                <input
-                  type="checkbox"
-                  checked={profile.legalIndexerIds.includes(ix.id)}
-                  onChange={() => toggleIndexer(ix.id)}
-                  className="accent-[color:var(--color-accent)]"
-                />
-                <span className="min-w-0 flex-1 truncate">{ix.name}</span>
-                {ix.privacy && <span className="badge flex-none">{ix.privacy}</span>}
-              </label>
-            ))}
-          </div>
-
-          <button className="btn btn-accent mt-5 w-full" onClick={saveProfile} disabled={savingProfile}>
-            {savingProfile ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save profile
-          </button>
-        </section>
-
-        {/* Watchlist */}
-        <section className="panel p-5">
-          <h2 className="mb-1 text-lg font-semibold text-ink">Watchlist</h2>
-          <p className="mb-4 text-xs text-muted">
-            Track a search or an RSS/torrent feed; new items are auto-grabbed.
-          </p>
-
-          <div className="mb-3 flex gap-2">
-            <button
-              className={`btn flex-1 ${wType === "SEARCH" ? "btn-accent" : "btn-ghost"}`}
-              onClick={() => setWType("SEARCH")}
-            >
-              <SearchIcon size={14} /> Search
-            </button>
-            <button
-              className={`btn flex-1 ${wType === "RSS" ? "btn-accent" : "btn-ghost"}`}
-              onClick={() => setWType("RSS")}
-            >
-              <Rss size={14} /> RSS feed
-            </button>
-          </div>
-
-          {wType === "SEARCH" ? (
-            <input
-              className="input mb-2"
-              placeholder="Query to track, e.g. “Debian 12 netinst”"
-              value={wQuery}
-              onChange={(e) => setWQuery(e.target.value)}
-            />
-          ) : (
-            <input
-              className="input mb-2"
-              placeholder="Feed URL (torrent/magnet RSS, e.g. an Internet Archive feed)"
-              value={wFeed}
-              onChange={(e) => setWFeed(e.target.value)}
-            />
-          )}
-          <div className="mb-2 flex gap-2">
-            <input
-              className="input"
-              placeholder="Label (optional)"
-              value={wLabel}
-              onChange={(e) => setWLabel(e.target.value)}
-            />
-            <select className="input w-32" value={wKind} onChange={(e) => setWKind(e.target.value)}>
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
+          <p className="text-sm text-muted">{taste.summary}</p>
+          {!!taste.favoriteGenres?.length && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {taste.favoriteGenres.map((g) => (
+                <span key={g} className="badge">{g}</span>
               ))}
-            </select>
-          </div>
-          <button className="btn btn-ghost mb-4 w-full" onClick={addWatch} disabled={adding}>
-            {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Add watch
-          </button>
-
-          <div className="space-y-2">
-            {watches.length === 0 && <p className="text-sm text-faint">No watches yet.</p>}
-            {watches.map((w) => (
-              <div key={w.id} className="card flex items-center gap-3 p-3">
-                {w.type === "RSS" ? (
-                  <Rss size={15} className="flex-none text-accent" />
-                ) : (
-                  <SearchIcon size={15} className="flex-none text-accent" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-ink">{w.label}</p>
-                  <p className="truncate text-xs text-faint">{w.query || w.feedUrl}</p>
-                </div>
-                <button
-                  className="badge flex-none"
-                  onClick={() => patchWatch(w.id, { autoGrab: !w.autoGrab })}
-                  title="Toggle auto-grab"
-                  style={w.autoGrab ? { color: "var(--color-success)", borderColor: "var(--color-success)55" } : undefined}
-                >
-                  auto {w.autoGrab ? "on" : "off"}
-                </button>
-                <button
-                  className="badge flex-none"
-                  onClick={() => patchWatch(w.id, { enabled: !w.enabled })}
-                  title="Enable/disable"
-                >
-                  {w.enabled ? "enabled" : "paused"}
-                </button>
-                <button className="flex-none text-faint hover:text-danger" onClick={() => deleteWatch(w.id)}>
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
+            </div>
+          )}
         </section>
-      </div>
+      )}
 
-      {/* What's new feed */}
-      <section className="mt-6">
+      {/* Following */}
+      <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
-          <h2 className="label">What&apos;s new</h2>
-          <span className="badge">{feed.length}</span>
+          <Tv size={16} className="text-accent" />
+          <h2 className="label">Following</h2>
+          <span className="badge">{follows.length}</span>
         </div>
-        {feed.length === 0 ? (
+
+        <div className="relative mb-4 max-w-md">
+          <SearchIcon size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+          <input
+            className="input pl-9"
+            placeholder="Follow a show — search TMDB…"
+            value={followQ}
+            onChange={(e) => doFollowSearch(e.target.value)}
+          />
+          {(followHits.length > 0 || searching) && (
+            <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+              {searching && <p className="p-3 text-xs text-faint">Searching…</p>}
+              {followHits.map((h) => (
+                <button
+                  key={h.tmdbId}
+                  onClick={() => follow(h.tmdbId, h.title)}
+                  className="flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-surface-2"
+                >
+                  {h.posterUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={h.posterUrl} alt="" className="h-10 w-7 flex-none rounded object-cover" loading="lazy" />
+                  ) : (
+                    <span className="h-10 w-7 flex-none rounded bg-surface-2" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                    {h.title} {h.year ? <span className="text-faint">({h.year})</span> : null}
+                  </span>
+                  <Plus size={14} className="flex-none text-accent" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {follows.length === 0 ? (
           <p className="text-sm text-faint">
-            Nothing yet. Add interests + allowed indexers or a watch, then Scan now.
+            Not following anything yet. Search above, or shows you watch in Jellyfin get followed automatically.
           </p>
         ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {feed.map((f) => (
-              <div key={f.id} className="card flex items-center gap-3 p-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-ink" title={f.title}>
-                    {f.title}
-                  </p>
-                  <p className="mono truncate text-xs text-faint">
-                    {[f.source, formatBytes(f.size), f.seeders != null ? `${f.seeders} seeders` : null]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </div>
-                {f.matchScore > 0 && (
-                  <span
-                    className="badge flex-none"
-                    style={
-                      f.matchScore >= 80
-                        ? { color: "var(--color-success)", borderColor: "var(--color-success)55" }
-                        : undefined
-                    }
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {follows.map((f) => (
+              <div key={f.id} className="w-32 flex-none">
+                <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2">
+                  {f.posterUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={f.posterUrl} alt={f.title} className="h-full w-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-faint"><Tv size={22} /></div>
+                  )}
+                  <button
+                    onClick={() => unfollow(f.id)}
+                    title="Unfollow"
+                    className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-danger"
                   >
-                    {f.matchScore}%
-                  </span>
-                )}
+                    <X size={12} />
+                  </button>
+                </div>
+                <p className="mt-1.5 truncate text-xs text-ink" title={f.title}>{f.title}</p>
                 <button
-                  className="btn btn-ghost flex-none px-2 py-1"
-                  title="Download"
-                  onClick={() => feedAction(f.id, "download")}
+                  onClick={() => toggleAuto(f)}
+                  className="mt-1 flex items-center gap-1 text-[11px]"
+                  style={{ color: f.autoDownload ? "var(--color-success)" : "var(--color-faint)" }}
+                  title="Toggle auto-download of new episodes"
                 >
-                  <Download size={14} />
-                </button>
-                <button
-                  className="flex-none text-faint hover:text-danger"
-                  title="Dismiss"
-                  onClick={() => feedAction(f.id, "dismiss")}
-                >
-                  <X size={15} />
+                  {f.autoDownload ? <Check size={11} /> : <X size={11} />} auto
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* Recommendations */}
+      <section className="mb-8">
+        <div className="mb-3 flex items-center gap-2">
+          <Sparkles size={16} className="text-accent" />
+          <h2 className="label">Recommended for you</h2>
+          <span className="badge">{recs.length}</span>
+        </div>
+
+        {recs.length === 0 ? (
+          <p className="text-sm text-faint">
+            {refreshing ? "Building your picks…" : "No picks yet. Hit “Refresh picks”. The more you watch, the better they get."}
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {recs.map((r) => (
+              <div key={r.id} className="group overflow-hidden rounded-xl border border-border bg-surface">
+                <div className="relative aspect-[2/3] bg-surface-2">
+                  {r.posterUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={r.posterUrl} alt={r.title} className="h-full w-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-faint"><Tv size={26} /></div>
+                  )}
+                  <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">
+                    {r.mediaType === "tv" ? "TV" : "Movie"} · {r.score}%
+                  </span>
+                  <button
+                    onClick={() => recAction(r, "dismiss")}
+                    title="Not interested"
+                    className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="p-3">
+                  <p className="truncate text-sm font-medium text-ink" title={r.title}>
+                    {r.title} {r.year ? <span className="text-faint">({r.year})</span> : null}
+                  </p>
+                  {r.reason && <p className="mt-1 line-clamp-2 text-xs text-muted">{r.reason}</p>}
+                  <div className="mt-3 flex gap-2">
+                    <button className="btn btn-accent flex-1 px-2 py-1.5 text-xs" onClick={() => recAction(r, "add")}>
+                      {r.mediaType === "tv" ? <><Plus size={13} /> Follow</> : <><Download size={13} /> Download</>}
+                    </button>
+                    {r.mediaType === "tv" && (
+                      <button className="btn btn-ghost px-2 py-1.5 text-xs" title="Download now" onClick={() => recAction(r, "download")}>
+                        <Download size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Automation & sources (advanced, collapsed) */}
+      <section className="mt-10 border-t border-border pt-6">
+        <button className="flex items-center gap-2 text-sm text-muted hover:text-ink" onClick={openAutomation}>
+          <Settings2 size={15} /> Automation &amp; sources {showAutomation ? "▲" : "▼"}
+        </button>
+
+        {showAutomation && (
+          <div className="mt-5 grid gap-6 lg:grid-cols-2">
+            <div className="panel p-5">
+              <h3 className="mb-1 text-sm font-semibold text-ink">Keyword automation</h3>
+              <p className="mb-3 text-xs text-muted">
+                Auto-grab releases matching these interests from your allowed lawful indexers.
+              </p>
+              <div className="mb-2 flex flex-wrap gap-2">
+                {profile.interests.map((it) => (
+                  <span key={it} className="badge">
+                    {it}
+                    <button onClick={() => setProfile((p) => ({ ...p, interests: p.interests.filter((x) => x !== it) }))} className="ml-1 hover:text-danger">
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+                {profile.interests.length === 0 && <span className="text-xs text-faint">none</span>}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  className="input"
+                  placeholder="e.g. ubuntu, nasa, documentary"
+                  value={interestInput}
+                  onChange={(e) => setInterestInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addInterest();
+                    }
+                  }}
+                />
+                <button className="btn btn-ghost flex-none" onClick={addInterest}>
+                  <Plus size={15} />
+                </button>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between">
+                <label className="label">Auto-grab high matches</label>
+                <input
+                  type="checkbox"
+                  checked={profile.autoGrabEnabled}
+                  onChange={() => setProfile((p) => ({ ...p, autoGrabEnabled: !p.autoGrabEnabled }))}
+                  className="accent-[color:var(--color-accent)]"
+                />
+              </div>
+
+              <label className="label mb-2 mt-4 block">Allowed indexers (lawful sources)</label>
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
+                {indexers.length === 0 && <p className="p-2 text-xs text-faint">No indexers — add lawful ones in Prowlarr.</p>}
+                {indexers.map((ix) => (
+                  <label key={ix.id} className="flex items-center gap-2 px-1 py-1 text-sm text-ink">
+                    <input
+                      type="checkbox"
+                      checked={profile.legalIndexerIds.includes(ix.id)}
+                      onChange={() =>
+                        setProfile((p) => ({
+                          ...p,
+                          legalIndexerIds: p.legalIndexerIds.includes(ix.id)
+                            ? p.legalIndexerIds.filter((x) => x !== ix.id)
+                            : [...p.legalIndexerIds, ix.id],
+                        }))
+                      }
+                      className="accent-[color:var(--color-accent)]"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{ix.name}</span>
+                    {ix.privacy && <span className="badge flex-none">{ix.privacy}</span>}
+                  </label>
+                ))}
+              </div>
+              <button className="btn btn-accent mt-4 w-full" onClick={saveProfile} disabled={savingProfile}>
+                {savingProfile ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save
+              </button>
+            </div>
+
+            <div className="panel p-5">
+              <h3 className="mb-1 text-sm font-semibold text-ink">Watchlist (search / RSS)</h3>
+              <p className="mb-3 text-xs text-muted">Track a query or a lawful torrent/RSS feed; new items auto-grab.</p>
+              <div className="mb-2 flex gap-2">
+                <button className={`btn flex-1 ${wType === "SEARCH" ? "btn-accent" : "btn-ghost"}`} onClick={() => setWType("SEARCH")}>
+                  <SearchIcon size={14} /> Search
+                </button>
+                <button className={`btn flex-1 ${wType === "RSS" ? "btn-accent" : "btn-ghost"}`} onClick={() => setWType("RSS")}>
+                  <Rss size={14} /> RSS
+                </button>
+              </div>
+              {wType === "SEARCH" ? (
+                <input className="input mb-2" placeholder="Query to track" value={wQuery} onChange={(e) => setWQuery(e.target.value)} />
+              ) : (
+                <input className="input mb-2" placeholder="Feed URL" value={wFeed} onChange={(e) => setWFeed(e.target.value)} />
+              )}
+              <div className="mb-2 flex gap-2">
+                <select className="input w-32" value={wKind} onChange={(e) => setWKind(e.target.value)}>
+                  {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                </select>
+                <button className="btn btn-ghost flex-1" onClick={addWatch}><Plus size={15} /> Add watch</button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {watches.map((w) => (
+                  <div key={w.id} className="card flex items-center gap-2 p-2.5">
+                    {w.type === "RSS" ? <Rss size={14} className="flex-none text-accent" /> : <SearchIcon size={14} className="flex-none text-accent" />}
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{w.label}</span>
+                    <button className="flex-none text-faint hover:text-danger" onClick={async () => { await fetch(`/api/watches/${w.id}`, { method: "DELETE" }); loadWatches(); }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {feed.length > 0 && (
+                <>
+                  <h4 className="label mb-2 mt-4">What&apos;s new</h4>
+                  <div className="space-y-1.5">
+                    {feed.slice(0, 8).map((f) => (
+                      <div key={f.id} className="card flex items-center gap-2 p-2.5">
+                        <span className="min-w-0 flex-1 truncate text-xs text-ink" title={f.title}>{f.title}</span>
+                        <span className="mono flex-none text-[11px] text-faint">{formatBytes(f.size)}</span>
+                        <button
+                          className="flex-none text-faint hover:text-accent"
+                          onClick={async () => { setFeed((x) => x.filter((y) => y.id !== f.id)); await fetch(`/api/feed/${f.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "download" }) }); }}
+                        >
+                          <Download size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </section>

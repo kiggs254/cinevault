@@ -66,7 +66,35 @@ const SECTIONS: Section[] = [
       { k: "s3SecretAccessKey", label: "Secret access key", type: "secret" },
       { k: "s3PublicUrl", label: "Public base URL (optional)", type: "url" },
       { k: "s3BasePrefix", label: "Base folder (all downloads go here)", type: "text" },
-      { k: "tmdbApiKey", label: "TMDB API key (optional, posters)", type: "secret" },
+      { k: "tmdbApiKey", label: "TMDB API key (posters + recommendations)", type: "secret" },
+    ],
+  },
+  {
+    title: "Jellyfin (watch history)",
+    desc: "Reads what you watch to power recommendations, auto-follow, and retention. On the same Docker network use http://jellyfin:8096.",
+    test: "jellyfin",
+    fields: [
+      { k: "jellyfinUrl", label: "Jellyfin URL", type: "url", placeholder: "http://jellyfin:8096" },
+      { k: "jellyfinApiKey", label: "Jellyfin API key", type: "secret" },
+      { k: "jellyfinUserId", label: "User ID (optional — first user if blank)", type: "text" },
+      { k: "autoFollowFromJellyfin", label: "Auto-follow shows I'm watching", type: "toggle" },
+    ],
+  },
+  {
+    title: "Telegram bot",
+    desc: "Chat with the agent and get push notifications for new episodes, discoveries, and completed downloads. Create a bot with @BotFather, then message it to link.",
+    test: "telegram",
+    fields: [
+      { k: "telegramBotToken", label: "Bot token", type: "secret" },
+      { k: "telegramChatId", label: "Chat ID (auto-set when you message the bot)", type: "text" },
+    ],
+  },
+  {
+    title: "Storage retention",
+    desc: "Automatically delete watched episodes & movies from S3 after a set period to reclaim space. Season packs are never auto-deleted.",
+    fields: [
+      { k: "autoDeleteWatched", label: "Auto-delete watched media from S3", type: "toggle" },
+      { k: "retentionDays", label: "Delete this many days after it was watched", type: "number" },
     ],
   },
   {
@@ -93,6 +121,9 @@ const DEFAULTS: Settings = {
   minSeeders: 3,
   maxSizeGB: 25,
   deleteAfterUpload: true,
+  autoFollowFromJellyfin: true,
+  autoDeleteWatched: false,
+  retentionDays: 30,
 };
 
 export default function SettingsPage() {

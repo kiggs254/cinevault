@@ -54,6 +54,15 @@ const schema = z.object({
 
   // Optional metadata enrichment
   TMDB_API_KEY: z.string().optional(),
+
+  // Jellyfin (media server) — read watch history for taste + retention
+  JELLYFIN_URL: z.string().optional(),
+  JELLYFIN_API_KEY: z.string().optional(),
+  JELLYFIN_USER_ID: z.string().optional(),
+
+  // Telegram bot — two-way agent chat + push notifications
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

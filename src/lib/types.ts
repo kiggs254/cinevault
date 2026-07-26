@@ -2,6 +2,21 @@ import { z } from "zod";
 
 export type MediaKind = "MOVIE" | "TV" | "MUSIC" | "SOFTWARE" | "OTHER";
 
+/* ------------------------------------------------------------------ *
+ * Taste profile (AI-distilled from Jellyfin watch + download history) *
+ * ------------------------------------------------------------------ */
+
+export const TasteProfileSchema = z.object({
+  summary: z.string().describe("One-paragraph natural-language description of the user's taste"),
+  favoriteGenres: z.array(z.string()).default([]),
+  favoritePeople: z.array(z.string()).default([]).describe("Actors/directors/creators they gravitate to"),
+  keywords: z.array(z.string()).default([]).describe("Themes/tones: e.g. slow-burn, heist, dystopian"),
+  eras: z.array(z.string()).default([]).describe("Preferred eras, e.g. '2010s', 'modern'"),
+  languages: z.array(z.string()).default([]),
+  avoid: z.array(z.string()).default([]).describe("Genres/traits they seem to avoid"),
+});
+export type TasteProfile = z.infer<typeof TasteProfileSchema> & { updatedAt?: string };
+
 export type DownloadStatus =
   | "QUEUED"
   | "SEARCHING"
@@ -34,6 +49,19 @@ export const PlannedQuerySchema = z.object({
   note: z.string().default(""),
 });
 export type PlannedQuery = z.infer<typeof PlannedQuerySchema>;
+
+export const RecommendRankSchema = z.object({
+  picks: z
+    .array(
+      z.object({
+        index: z.number().int().describe("Index into the provided candidate list"),
+        reason: z.string().describe("Short, personal: why THIS user would like it"),
+        score: z.number().int().min(0).max(100),
+      }),
+    )
+    .default([]),
+});
+export type RecommendRank = z.infer<typeof RecommendRankSchema>;
 
 export const RankDecisionSchema = z.object({
   chosenIndex: z.number().int().describe("Index of the best result, or -1 if none are acceptable"),
