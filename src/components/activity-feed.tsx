@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -10,6 +11,7 @@ import {
   Shuffle,
   Sparkles,
   Info,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 import { useDownloadsCtx } from "./downloads-context";
@@ -49,13 +51,19 @@ function timeAgo(iso: string): string {
 /** Live narrative of what the agent is doing in the background (search → queue → download → upload → done). */
 export function ActivityFeed() {
   const { activity, downloads } = useDownloadsCtx();
+  const [open, setOpen] = useState(false);
   const activeCount = downloads.filter((d) => ACTIVE.has(d.status)).length;
 
   if (activity.length === 0 && activeCount === 0) return null;
 
   return (
     <div className="panel mb-3 overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`flex w-full items-center gap-2 px-4 py-3 text-left ${open ? "border-b border-border" : ""}`}
+      >
         {activeCount > 0 ? (
           <span className="relative flex h-2.5 w-2.5 flex-none items-center justify-center">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
@@ -67,27 +75,33 @@ export function ActivityFeed() {
         <span className="text-sm font-semibold text-ink">
           {activeCount > 0 ? `Working — ${activeCount} active` : "Recent activity"}
         </span>
-        <Link href="/downloads" className="ml-auto text-xs text-muted hover:text-accent">
+        <Link
+          href="/downloads"
+          onClick={(e) => e.stopPropagation()}
+          className="ml-auto text-xs text-muted hover:text-accent"
+        >
           Downloads →
         </Link>
-      </div>
+        <ChevronDown size={16} className={`flex-none text-faint transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
 
-      {activity.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-faint">Working in the background…</p>
-      ) : (
-        <div className="max-h-64 space-y-2 overflow-y-auto px-4 py-3">
-          {activity.map((a) => {
-            const { Icon, color } = look(a.kind);
-            return (
-              <div key={a.id} className="flex items-start gap-2 text-xs">
-                <Icon size={13} className="mt-0.5 flex-none" style={{ color }} />
-                <span className="min-w-0 flex-1 text-muted">{a.message}</span>
-                <span className="flex-none text-[10px] text-faint">{timeAgo(a.at)}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {open &&
+        (activity.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-faint">Working in the background…</p>
+        ) : (
+          <div className="max-h-64 space-y-2 overflow-y-auto px-4 py-3">
+            {activity.map((a) => {
+              const { Icon, color } = look(a.kind);
+              return (
+                <div key={a.id} className="flex items-start gap-2 text-xs">
+                  <Icon size={13} className="mt-0.5 flex-none" style={{ color }} />
+                  <span className="min-w-0 flex-1 text-muted">{a.message}</span>
+                  <span className="flex-none text-[10px] text-faint">{timeAgo(a.at)}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
     </div>
   );
 }
