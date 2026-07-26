@@ -64,6 +64,7 @@ export function EpisodeBrowser({
   const [loading, setLoading] = useState(false);
   const [busyEp, setBusyEp] = useState<number | null>(null);
   const [seasonBusy, setSeasonBusy] = useState(false);
+  const [queuedSeasons, setQueuedSeasons] = useState<Set<number>>(new Set());
 
   // Fetch the season list if not supplied by the parent.
   useEffect(() => {
@@ -146,20 +147,35 @@ export function EpisodeBrowser({
 
       {onDownloadSeason && active >= 1 && (
         <button
-          className="btn btn-ghost mb-3 w-full text-sm"
+          className={`btn mb-3 w-full text-sm ${queuedSeasons.has(active) ? "btn-accent" : "btn-ghost"}`}
           disabled={seasonBusy}
           onClick={async () => {
             setSeasonBusy(true);
             try {
               await onDownloadSeason(active);
+              setQueuedSeasons((s) => new Set(s).add(active));
               await refresh();
             } finally {
               setSeasonBusy(false);
             }
           }}
         >
-          {seasonBusy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          {mode === "library" ? "Grab missing episodes" : `Download all of Season ${active}`}
+          {seasonBusy ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : queuedSeasons.has(active) ? (
+            <Check size={14} />
+          ) : (
+            <Download size={14} />
+          )}
+          {seasonBusy
+            ? "Queuing…"
+            : queuedSeasons.has(active)
+              ? mode === "library"
+                ? "Grabbing — see Assistant tab"
+                : `Season ${active} queued — grabbing in background`
+              : mode === "library"
+                ? "Grab missing episodes"
+                : `Download all of Season ${active}`}
         </button>
       )}
 
