@@ -3,7 +3,20 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut, Clapperboard, Search as SearchIcon } from "lucide-react";
+import {
+  Home,
+  Library,
+  Download,
+  Compass,
+  Sparkles,
+  Settings2,
+  LogOut,
+  Clapperboard,
+  Search as SearchIcon,
+  Magnet,
+  HardDrive,
+  type LucideIcon,
+} from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -60,12 +73,13 @@ function useSystems() {
   }, []);
   const s = cfg?.settings ?? {};
   const sec = cfg?.secretsSet ?? {};
-  return [
-    { label: "AI", ok: !!(sec.moonshotApiKey || sec.mimoApiKey) },
-    { label: "Torrent", ok: !!s.qbitUrl },
-    { label: "Indexer", ok: !!(s.prowlarrUrl && sec.prowlarrApiKey) },
-    { label: "Storage", ok: !!(s.s3Endpoint && s.s3Bucket && sec.s3SecretAccessKey) },
+  const systems: { label: string; ok: boolean; icon: LucideIcon }[] = [
+    { label: "AI", ok: !!(sec.moonshotApiKey || sec.mimoApiKey), icon: Sparkles },
+    { label: "Torrent", ok: !!s.qbitUrl, icon: Magnet },
+    { label: "Indexer", ok: !!(s.prowlarrUrl && sec.prowlarrApiKey), icon: SearchIcon },
+    { label: "Storage", ok: !!(s.s3Endpoint && s.s3Bucket && sec.s3SecretAccessKey), icon: HardDrive },
   ];
+  return systems;
 }
 
 function Wordmark({ compact }: { compact?: boolean }) {
@@ -95,6 +109,7 @@ function Wordmark({ compact }: { compact?: boolean }) {
 export function Sidebar() {
   const pathname = usePathname();
   const systems = useSystems();
+  const okCount = systems.filter((s) => s.ok).length;
   const activeCount = useActiveCount();
   const logout = useLogout();
 
@@ -146,17 +161,52 @@ export function Sidebar() {
 
       <div className="mt-auto space-y-4">
         <div className="card p-3">
-          <p className="label mb-2.5">Systems</p>
-          <div className="grid grid-cols-2 gap-2">
-            {systems.map((sys) => (
-              <div key={sys.label} className="flex items-center gap-1.5">
-                <span
-                  className="dot"
-                  style={{ background: sys.ok ? "var(--color-success)" : "var(--color-faint)" }}
-                />
-                <span className="text-xs text-muted">{sys.label}</span>
-              </div>
-            ))}
+          <div className="mb-2.5 flex items-center justify-between">
+            <p className="label">Systems</p>
+            <span
+              className="mono text-[10px] font-semibold"
+              style={{ color: okCount === systems.length ? "var(--color-success)" : "var(--color-muted)" }}
+            >
+              {okCount}/{systems.length}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {systems.map((sys) => {
+              const Icon = sys.icon;
+              return (
+                <div
+                  key={sys.label}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-surface-2/40 px-2 py-1.5"
+                  title={sys.ok ? `${sys.label} connected` : `${sys.label} not configured`}
+                >
+                  <span
+                    className="flex h-6 w-6 flex-none items-center justify-center rounded-md"
+                    style={{
+                      background: sys.ok
+                        ? "color-mix(in srgb, var(--color-success) 16%, transparent)"
+                        : "var(--color-surface)",
+                      color: sys.ok ? "var(--color-success)" : "var(--color-faint)",
+                    }}
+                  >
+                    <Icon size={12} />
+                  </span>
+                  <span
+                    className="min-w-0 flex-1 truncate text-[11px]"
+                    style={{ color: sys.ok ? "var(--color-ink)" : "var(--color-muted)" }}
+                  >
+                    {sys.label}
+                  </span>
+                  {sys.ok ? (
+                    <span
+                      className="dot dot-live flex-none"
+                      style={{ background: "var(--color-success)", color: "var(--color-success)" }}
+                    />
+                  ) : (
+                    <span className="dot flex-none" style={{ background: "var(--color-faint)" }} />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="flex items-center gap-2">
