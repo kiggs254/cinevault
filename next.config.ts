@@ -11,6 +11,8 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
   "font-src 'self' data:",
+  // YouTube trailer embeds (privacy-enhanced domain).
+  "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

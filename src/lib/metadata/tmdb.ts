@@ -365,6 +365,61 @@ export async function getTvDetails(apiKey: string, id: number): Promise<TmdbTvDe
   };
 }
 
+/** Best YouTube trailer key for a title (prefers an official Trailer), or null. */
+export async function getVideoKey(
+  apiKey: string,
+  type: TmdbMediaType,
+  id: number,
+): Promise<string | null> {
+  const data = await tmdbFetch<{
+    results?: Array<{ key?: string; site?: string; type?: string; official?: boolean }>;
+  }>(apiKey, `/${type}/${id}/videos`);
+  const vids = (data?.results ?? []).filter((v) => v.site === "YouTube" && v.key);
+  if (vids.length === 0) return null;
+  const rank = (v: { type?: string; official?: boolean }) =>
+    (v.type === "Trailer" ? 0 : v.type === "Teaser" ? 1 : 2) - (v.official ? 0.5 : 0);
+  vids.sort((a, b) => rank(a) - rank(b));
+  return vids[0].key ?? null;
+}
+
+/** Recent, well-rated titles of one type that have a backdrop + synopsis. */
+export async function getLatestTopRated(
+  apiKey: string,
+  type: TmdbMediaType,
+): Promise<TmdbTitle[]> {
+  const dateField = type === "tv" ? "first_air_date" : "primary_release_date";
+  const since = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const until = new Date().toISOString().slice(0, 10);
+  const data = await tmdbFetch<{ results?: unknown[] }>(apiKey, `/discover/${type}`, {
+    sort_by: "popularity.desc",
+    "vote_average.gte": "6.5",
+    "vote_count.gte": "80",
+    [`${dateField}.gte`]: since,
+    [`${dateField}.lte`]: until,
+    include_adult: "false",
+  });
+  return toTitles(data, type).filter((t) => t.backdropUrl && t.overview);
+}
+
+/** Merged latest-highly-rated movies + TV for the hero slider (dedup, capped). */
+export async function getHeroTitles(apiKey: string, limit = 7): Promise<TmdbTitle[]> {
+  const [movies, tv] = await Promise.all([
+    getLatestTopRated(apiKey, "movie"),
+    getLatestTopRated(apiKey, "tv"),
+  ]);
+  const merged = [...movies, ...tv].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+  const seen = new Set<string>();
+  const out: TmdbTitle[] = [];
+  for (const t of merged) {
+    const k = `${t.mediaType}-${t.tmdbId}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** Episodes (with air dates) for one season. */
 export async function getSeasonEpisodes(
   apiKey: string,

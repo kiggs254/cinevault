@@ -3,16 +3,20 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, Library, Compass, Sparkles, Settings2, LogOut } from "lucide-react";
+import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
+import { useDownloadsCtx } from "@/components/downloads-context";
 
 const NAV = [
   { href: "/", label: "Home", icon: Home },
   { href: "/library", label: "Library", icon: Library },
+  { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
+
+const ACTIVE_STATUSES = ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"];
 
 interface MaskedConfig {
   settings: Record<string, unknown>;
@@ -49,7 +53,15 @@ function Wordmark() {
   );
 }
 
-function NavItems({ pathname, onNav }: { pathname: string; onNav?: () => void }) {
+function NavItems({
+  pathname,
+  onNav,
+  activeCount,
+}: {
+  pathname: string;
+  onNav?: () => void;
+  activeCount: number;
+}) {
   return (
     <>
       {NAV.map(({ href, label, icon: Icon }) => {
@@ -69,6 +81,14 @@ function NavItems({ pathname, onNav }: { pathname: string; onNav?: () => void })
             )}
             <Icon size={18} strokeWidth={2} />
             {label}
+            {href === "/downloads" && activeCount > 0 && (
+              <span
+                className="badge ml-auto"
+                style={{ color: "var(--color-accent)", borderColor: "var(--color-accent)55" }}
+              >
+                {activeCount}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -80,6 +100,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const systems = useSystems();
+  const { downloads } = useDownloadsCtx();
+  const activeCount = downloads.filter((d) => ACTIVE_STATUSES.includes(d.status)).length;
   const [mobileOpen, setMobileOpen] = useState(false);
 
   async function logout() {
@@ -98,7 +120,7 @@ export function Sidebar() {
         </div>
 
         <nav className="flex flex-col gap-1">
-          <NavItems pathname={pathname} />
+          <NavItems pathname={pathname} activeCount={activeCount} />
         </nav>
 
         <div className="mt-auto space-y-4">
@@ -134,7 +156,7 @@ export function Sidebar() {
         </button>
         {mobileOpen && (
           <nav className="absolute left-0 right-0 top-full flex flex-col gap-1 border-b border-border bg-surface p-3">
-            <NavItems pathname={pathname} onNav={() => setMobileOpen(false)} />
+            <NavItems pathname={pathname} onNav={() => setMobileOpen(false)} activeCount={activeCount} />
             <button onClick={logout} className="btn btn-ghost mt-2 w-full text-muted">
               <LogOut size={16} /> Sign out
             </button>

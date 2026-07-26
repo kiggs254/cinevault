@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Check, Plus, Tv, Film, Star } from "lucide-react";
+import { X, Download, Loader2, Check, Plus, Tv, Film, Star, Play } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
+import { TrailerModal, type TrailerSeed } from "./trailer-modal";
 
 interface CastMember {
   name: string;
@@ -78,6 +79,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [following, setFollowing] = useState(false);
+  const [trailer, setTrailer] = useState<TrailerSeed | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -254,6 +256,19 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                 </div>
               )}
 
+              <button
+                className="btn btn-ghost mb-3 w-full"
+                onClick={() =>
+                  setTrailer({
+                    tmdbId: seed.tmdbId,
+                    mediaType: seed.mediaType,
+                    title: details?.title ?? seed.title,
+                  })
+                }
+              >
+                <Play size={15} /> Watch trailer
+              </button>
+
               {seed.mediaType === "movie" ? (
                 <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy || details?.ownedMovie}>
                   {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
@@ -307,6 +322,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
           )}
         </div>
       </div>
+      {trailer && <TrailerModal seed={trailer} onClose={() => setTrailer(null)} />}
     </div>
   );
 }

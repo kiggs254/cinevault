@@ -44,7 +44,7 @@ const isActive = (s: DownloadStatus) =>
 // Where offering "replace with a different source" makes sense.
 const canReplace = (s: DownloadStatus) => s !== "COMPLETED" && s !== "UPLOADING";
 
-function Row({
+export function DownloadRow({
   d,
   onRetry,
   onRemove,
@@ -275,7 +275,7 @@ export function DownloadsPanel({
         ) : (
           <div className="grid gap-3">
             {active.map((d) => (
-              <Row key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
+              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
             ))}
           </div>
         )}
@@ -289,7 +289,7 @@ export function DownloadsPanel({
           </div>
           <div className="grid gap-3">
             {rest.map((d) => (
-              <Row key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
+              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
             ))}
           </div>
         </div>

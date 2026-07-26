@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search as SearchIcon, Loader2, Info, ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
+import { Search as SearchIcon, Loader2, ChevronRight } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
-import { useDownloads } from "@/components/use-downloads";
-import { DownloadsPanel } from "@/components/downloads-panel";
+import { HeroSlider, type HeroItem } from "@/components/hero-slider";
 
 interface TmdbItem {
   tmdbId: number;
@@ -39,16 +38,40 @@ function Poster({ item, onClick }: { item: TmdbItem; onClick: () => void }) {
   );
 }
 
+function SearchBar({
+  q,
+  searching,
+  onChange,
+}: {
+  q: string;
+  searching: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <SearchIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+      <input
+        className="input pl-9"
+        placeholder="Search movies & shows to download…"
+        value={q}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {searching && (
+        <Loader2 size={15} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-faint" />
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [heroItems, setHeroItems] = useState<HeroItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [noTmdb, setNoTmdb] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<TmdbItem[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [seed, setSeed] = useState<TitleSeed | null>(null);
-  const [showDl, setShowDl] = useState(false);
-  const dl = useDownloads();
 
   useEffect(() => {
     jsonFetch<{ rows: Row[]; error?: string }>("/api/browse")
@@ -58,6 +81,9 @@ export default function HomePage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    jsonFetch<{ items: HeroItem[] }>("/api/hero")
+      .then((d) => setHeroItems(d.items ?? []))
+      .catch(() => {});
   }, []);
 
   async function search(v: string) {
@@ -89,43 +115,27 @@ export default function HomePage() {
       posterUrl: i.posterUrl ?? null,
     });
 
-  const hero = rows[0]?.items?.find((i) => i.backdropUrl) ?? rows[0]?.items?.[0];
-  const activeCount = dl.downloads.filter((d) => !["COMPLETED", "FAILED", "CANCELLED"].includes(d.status)).length;
+  const showHero = !results && heroItems.length > 0;
 
   return (
     <div className="min-h-full">
-      {/* Hero */}
-      {hero && !results && (
-        <div className="relative h-[46vh] min-h-[300px] w-full">
-          {hero.backdropUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={hero.backdropUrl} alt="" className="h-full w-full object-cover" />
-          )}
-          <div className="absolute inset-0" style={{ background: "linear-gradient(to top, var(--color-bg), transparent 55%), linear-gradient(to right, var(--color-bg) 5%, transparent 45%)" }} />
-          <div className="absolute bottom-8 left-5 max-w-lg md:left-10">
-            <h1 className="text-4xl font-bold text-ink md:text-5xl" style={{ fontFamily: "var(--font-display)" }}>
-              {hero.title}
-            </h1>
-            {hero.overview && <p className="mt-2 line-clamp-3 text-sm text-muted">{hero.overview}</p>}
-            <button className="btn btn-accent mt-4" onClick={() => open(hero)}>
-              <Info size={15} /> More info &amp; download
-            </button>
+      {/* Hero slider with the search bar floated up over the top */}
+      {showHero && (
+        <div className="relative">
+          <HeroSlider items={heroItems} onOpen={open} />
+          <div className="absolute left-1/2 top-4 z-20 w-[92%] max-w-2xl -translate-x-1/2 md:top-6">
+            <SearchBar q={q} searching={searching} onChange={search} />
           </div>
         </div>
       )}
 
       <div className="mx-auto max-w-6xl px-5 py-6 md:px-10">
-        {/* Search */}
-        <div className="relative mb-8 max-w-xl">
-          <SearchIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            className="input pl-9"
-            placeholder="Search movies & shows to download…"
-            value={q}
-            onChange={(e) => search(e.target.value)}
-          />
-          {searching && <Loader2 size={15} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-faint" />}
-        </div>
+        {/* Search bar at the top when there is no hero (no TMDB key, or while searching) */}
+        {!showHero && (
+          <div className="mb-8 max-w-2xl">
+            <SearchBar q={q} searching={searching} onChange={search} />
+          </div>
+        )}
 
         {noTmdb && (
           <p className="mb-6 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
@@ -172,19 +182,6 @@ export default function HomePage() {
               </section>
             ))}
           </>
-        )}
-
-        {/* Active downloads (collapsible) */}
-        {dl.downloads.length > 0 && (
-          <section className="mt-4 border-t border-border pt-5">
-            <button className="mb-3 flex items-center gap-2 text-sm text-muted hover:text-ink" onClick={() => setShowDl((v) => !v)}>
-              {showDl ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              Downloads {activeCount > 0 && <span className="badge" style={{ color: "var(--color-accent)" }}>{activeCount} active</span>}
-            </button>
-            {showDl && (
-              <DownloadsPanel downloads={dl.downloads} loaded={dl.loaded} onRetry={dl.retry} onRemove={dl.remove} onRefresh={dl.refetch} />
-            )}
-          </section>
         )}
       </div>
 
