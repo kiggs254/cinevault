@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
+import { EpisodeBrowser } from "@/components/episode-browser";
 
 interface Item {
   id: string;
@@ -129,25 +130,61 @@ export default function LibraryPage() {
                 <X size={18} />
               </button>
             </div>
-            <div className="divide-y divide-[color:var(--color-border)]">
-              {active.items
-                .slice()
-                .sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0))
-                .map((i) => (
-                  <div key={i.id} className="flex items-center gap-3 p-3">
-                    <FolderOpen size={15} className="flex-none text-faint" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-ink">{epLabel(i)}</p>
-                      <p className="mono truncate text-[11px] text-faint">{formatBytes(i.sizeBytes)}</p>
+            {active.kind === "TV" && active.tmdbId ? (
+              <div className="p-4">
+                <EpisodeBrowser
+                  tmdbId={active.tmdbId}
+                  mode="library"
+                  initialSeason={active.items.reduce((m, i) => Math.max(m, i.season ?? 0), 0) || undefined}
+                  onOpen={open}
+                  onDownloadEpisode={(season, episode) =>
+                    jsonFetch("/api/download/tmdb", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        tmdbId: active.tmdbId,
+                        mediaType: "tv",
+                        title: active.title,
+                        year: active.year,
+                        season,
+                        episode,
+                      }),
+                    }).then(() => {})
+                  }
+                  onDownloadSeason={(season) =>
+                    jsonFetch("/api/download/tmdb", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        tmdbId: active.tmdbId,
+                        mediaType: "tv",
+                        title: active.title,
+                        year: active.year,
+                        seasons: [season],
+                      }),
+                    }).then(() => {})
+                  }
+                />
+              </div>
+            ) : (
+              <div className="divide-y divide-[color:var(--color-border)]">
+                {active.items
+                  .slice()
+                  .sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0))
+                  .map((i) => (
+                    <div key={i.id} className="flex items-center gap-3 p-3">
+                      <FolderOpen size={15} className="flex-none text-faint" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-ink">{epLabel(i)}</p>
+                        <p className="mono truncate text-[11px] text-faint">{formatBytes(i.sizeBytes)}</p>
+                      </div>
+                      {i.s3Key && (
+                        <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => open(i.s3Key!)} title="Open / stream">
+                          <Play size={13} /> Open
+                        </button>
+                      )}
                     </div>
-                    {i.s3Key && (
-                      <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => open(i.s3Key!)} title="Open / stream">
-                        <Play size={13} /> Open
-                      </button>
-                    )}
-                  </div>
-                ))}
-            </div>
+                  ))}
+              </div>
+            )}
             <p className="flex items-center gap-1.5 border-t border-border p-3 text-[11px] text-faint">
               <HardDrive size={12} /> Tip: for smooth TV playback use the Jellyfin app — this opens the raw file.
             </p>

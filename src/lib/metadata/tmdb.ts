@@ -39,6 +39,10 @@ export interface TmdbEpisode {
   episodeNumber: number;
   name?: string;
   airDate?: string; // YYYY-MM-DD
+  overview?: string;
+  stillUrl?: string; // episode thumbnail
+  runtime?: number; // minutes
+  voteAverage?: number;
 }
 
 export interface TmdbSeason {
@@ -436,5 +440,9 @@ export async function getSeasonEpisodes(
     episodeNumber: (e.episode_number as number) ?? 0,
     name: (e.name as string) || undefined,
     airDate: (e.air_date as string) || undefined,
+    overview: (e.overview as string) || undefined,
+    stillUrl: e.still_path ? `https://image.tmdb.org/t/p/w300${e.still_path}` : undefined,
+    runtime: typeof e.runtime === "number" ? e.runtime : undefined,
+    voteAverage: typeof e.vote_average === "number" ? e.vote_average : undefined,
   }));
 }

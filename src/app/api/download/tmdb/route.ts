@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { grabMovie } from "@/lib/service/downloads";
+import { grabMovie, grabSingleEpisode } from "@/lib/service/downloads";
 import { enqueueSeasonGrab } from "@/lib/queue";
 
 export const runtime = "nodejs";
@@ -11,6 +11,8 @@ interface Body {
   title?: string;
   year?: number | null;
   seasons?: number[];
+  season?: number;
+  episode?: number;
 }
 
 /** Direct download from a TMDB title: a movie, or one/more full seasons (packs). */
@@ -28,6 +30,22 @@ export async function POST(req: Request) {
       return dl
         ? NextResponse.json({ queued: [dl.title] })
         : NextResponse.json({ error: "No suitable release found" }, { status: 404 });
+    }
+
+    // Single episode.
+    if (b.season != null && b.episode != null) {
+      const ok = await grabSingleEpisode({
+        tmdbId,
+        title,
+        season: b.season,
+        episode: b.episode,
+        year: b.year ?? null,
+      });
+      return NextResponse.json(
+        ok
+          ? { queued: [`S${b.season}E${b.episode}`], totalQueued: 1 }
+          : { queued: [], failed: [b.episode], totalQueued: 0 },
+      );
     }
 
     const seasons = Array.isArray(b.seasons) ? b.seasons.filter((n) => Number.isInteger(n) && n > 0) : [];

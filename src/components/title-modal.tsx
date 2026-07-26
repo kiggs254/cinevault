@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Check, Plus, Tv, Film, Star, Play } from "lucide-react";
+import { X, Download, Loader2, Plus, Tv, Film, Star, Play } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TrailerModal, type TrailerSeed } from "./trailer-modal";
+import { EpisodeBrowser } from "./episode-browser";
 
 interface CastMember {
   name: string;
@@ -75,7 +76,6 @@ interface Details {
 export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => void }) {
   const [details, setDetails] = useState<Details | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [following, setFollowing] = useState(false);
@@ -88,10 +88,6 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
       .then((d) => {
         if (!alive) return;
         setDetails(d.details);
-        // Pre-select released, not-yet-owned seasons.
-        if (d.details.seasons) {
-          setSelected(new Set(d.details.seasons.filter((s) => s.released && !s.owned).map((s) => s.seasonNumber)));
-        }
       })
       .catch(() => setMsg("Couldn't load details."))
       .finally(() => alive && setLoading(false));
@@ -105,15 +101,6 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  function toggleSeason(n: number) {
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(n)) next.delete(n);
-      else next.add(n);
-      return next;
-    });
-  }
 
   async function downloadMovie() {
     setBusy(true);
@@ -131,26 +118,34 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     }
   }
 
-  async function downloadSeasons() {
-    if (selected.size === 0) return;
-    setBusy(true);
+  async function downloadSeason(season: number) {
     setMsg("");
-    try {
-      const r = await jsonFetch<{ scheduled?: number; queued: string[] }>("/api/download/tmdb", {
-        method: "POST",
-        body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "tv", title: details?.title ?? seed.title, year: details?.year ?? seed.year, seasons: [...selected] }),
-      });
-      const n = r.scheduled ?? r.queued.length;
-      setMsg(
-        n > 0
-          ? `Grabbing ${n} season${n === 1 ? "" : "s"} in the background — episodes appear in Downloads as they're found.`
-          : "Nothing to grab.",
-      );
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    await jsonFetch("/api/download/tmdb", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdbId: seed.tmdbId,
+        mediaType: "tv",
+        title: details?.title ?? seed.title,
+        year: details?.year ?? seed.year,
+        seasons: [season],
+      }),
+    });
+    setMsg(`Grabbing Season ${season} in the background — episodes appear in Downloads.`);
+  }
+
+  async function downloadEpisode(season: number, episode: number) {
+    setMsg("");
+    await jsonFetch("/api/download/tmdb", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdbId: seed.tmdbId,
+        mediaType: "tv",
+        title: details?.title ?? seed.title,
+        year: details?.year ?? seed.year,
+        season,
+        episode,
+      }),
+    });
   }
 
   async function follow() {
@@ -278,44 +273,19 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                 </button>
               ) : (
                 <>
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="label">Select seasons</p>
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="label">Episodes</p>
                     <button className="btn btn-ghost px-2 py-1 text-xs" onClick={follow} disabled={following}>
                       {following ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Follow
                     </button>
                   </div>
-                  <div className="mb-4 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
-                    {(details?.seasons ?? []).map((s) => {
-                      const on = selected.has(s.seasonNumber);
-                      const disabled = !s.released || s.owned;
-                      return (
-                        <button
-                          key={s.seasonNumber}
-                          onClick={() => !disabled && toggleSeason(s.seasonNumber)}
-                          disabled={disabled}
-                          className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                            on ? "border-accent bg-accent/10 text-ink" : "border-border text-muted"
-                          } ${disabled ? "opacity-45" : "hover:border-accent"}`}
-                        >
-                          <span>
-                            S{s.seasonNumber}
-                            <span className="ml-1 text-xs text-faint">{s.episodeCount}ep</span>
-                          </span>
-                          {s.owned ? (
-                            <Check size={14} className="text-success" />
-                          ) : !s.released ? (
-                            <span className="text-[10px] text-faint">soon</span>
-                          ) : on ? (
-                            <Check size={14} className="text-accent" />
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button className="btn btn-accent w-full" onClick={downloadSeasons} disabled={busy || selected.size === 0}>
-                    {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                    Download {selected.size || ""} season{selected.size === 1 ? "" : "s"} (720p)
-                  </button>
+                  <EpisodeBrowser
+                    tmdbId={seed.tmdbId}
+                    seasons={details?.seasons ?? []}
+                    mode="browse"
+                    onDownloadEpisode={downloadEpisode}
+                    onDownloadSeason={downloadSeason}
+                  />
                 </>
               )}
 

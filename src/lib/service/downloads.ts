@@ -205,6 +205,27 @@ export async function grabMovie(opts: {
   });
 }
 
+/** Grab one specific episode by TMDB id (720p, smallest well-seeded, validated). */
+export async function grabSingleEpisode(opts: {
+  tmdbId: number;
+  title: string;
+  season: number;
+  episode: number;
+  year?: number | null;
+}): Promise<boolean> {
+  if (opts.season < 1 || opts.episode < 1) return false;
+  const cfg = await getConfig();
+  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return false;
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  return grabEpisode({
+    prowlarr,
+    cfg,
+    show: { title: opts.title, year: opts.year ?? null, tmdbId: opts.tmdbId },
+    ep: { seasonNumber: opts.season, episodeNumber: opts.episode },
+    notify: false,
+  });
+}
+
 const DAY = 24 * 60 * 60 * 1000;
 const YEAR = 365 * DAY;
 
