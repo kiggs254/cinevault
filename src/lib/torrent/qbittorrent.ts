@@ -215,6 +215,27 @@ export class QbClient {
     return list[0];
   }
 
+  /** All torrents, optionally scoped to a category. */
+  async list(category?: string): Promise<QbTorrentInfo[]> {
+    return this.info(category ? { category } : {});
+  }
+
+  /** Apply tag(s) to torrents — lets us re-find a deduped add by our download id. */
+  async addTags(hashes: string[], tags: string): Promise<void> {
+    await this.ensureAuth();
+    const body = new URLSearchParams({
+      hashes: hashes.map((h) => h.toLowerCase()).join("|"),
+      tags,
+    });
+    await fetch(`${this.base}/api/v2/torrents/addTags`, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/x-www-form-urlencoded" }),
+      body,
+    }).catch(() => {
+      /* best-effort tag; lookup still falls back to name/hash */
+    });
+  }
+
   async pause(hash: string): Promise<void> {
     await this.ensureAuth();
     const body = new URLSearchParams({ hashes: hash.toLowerCase() });

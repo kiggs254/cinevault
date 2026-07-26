@@ -72,19 +72,53 @@ async function setStatus(id: string, status: DownloadStatus, progress?: number) 
   await publishProgress({ type: "status", downloadId: id, status, progress });
 }
 
+const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/**
+ * Wait for an added torrent to appear. Beyond hash/tag, this handles the case
+ * where qBittorrent DEDUPED the add — keeping a pre-existing torrent under an old
+ * tag, so ours never applied (common for .torrent sources, where we have no
+ * info-hash to search by) — or simply hasn't tagged it yet: it matches the
+ * release name or a newly-appeared torrent, then applies our download id as a tag
+ * so later lookups (and stall re-sourcing) can find it.
+ */
 async function waitForTorrent(
   qb: QbClient,
-  tag: string,
+  id: string,
   hash: string | undefined,
+  releaseName: string,
+  beforeHashes: Set<string>,
   timeoutMs: number,
 ): Promise<QbTorrentInfo | undefined> {
   const deadline = Date.now() + timeoutMs;
+  const target = normName(releaseName);
   while (Date.now() < deadline) {
-    const info = (hash ? await qb.getByHash(hash) : undefined) ?? (await qb.getByTag(tag));
+    let info = (hash ? await qb.getByHash(hash) : undefined) ?? (await qb.getByTag(id));
+    if (!info) {
+      const all = await qb.list(CATEGORY).catch(() => [] as QbTorrentInfo[]);
+      const byName =
+        target.length >= 12
+          ? all.find((t) => {
+              const n = normName(t.name);
+              return n === target || (n.length >= 12 && (n.includes(target) || target.includes(n)));
+            })
+          : undefined;
+      const freshList = all.filter((t) => !beforeHashes.has(t.hash.toLowerCase()));
+      // Prefer a name match (specific); fall back to a lone new torrent. Avoid
+      // guessing when several new torrents appeared (concurrent adds).
+      info = byName ?? (freshList.length === 1 ? freshList[0] : undefined);
+      if (info) await qb.addTags([info.hash], id).catch(() => {});
+    }
     if (info) return info;
     await sleep(2000);
   }
   return undefined;
+}
+
+/** Snapshot the current torrent hashes in our category (to detect a new add). */
+async function categoryHashes(qb: QbClient): Promise<Set<string>> {
+  const all = await qb.list(CATEGORY).catch(() => [] as QbTorrentInfo[]);
+  return new Set(all.map((t) => t.hash.toLowerCase()));
 }
 
 /** A torrent went dead enough to switch source — recoverable, not a hard fail. */
@@ -248,6 +282,7 @@ async function handleStall(
   });
   if (claim.count === 0) return "superseded";
 
+  const beforeHashes = await categoryHashes(qb);
   await qb.delete([current.hash], true).catch(() => {});
   await qb.addTorrent({
     magnet: isMagnet ? newSource : undefined,
@@ -256,7 +291,7 @@ async function handleStall(
     category: CATEGORY,
     tag: id,
   });
-  const info = await waitForTorrent(qb, id, newHash ?? undefined, REGISTER_TIMEOUT_MS);
+  const info = await waitForTorrent(qb, id, newHash ?? undefined, chosen.title, beforeHashes, REGISTER_TIMEOUT_MS);
   if (!info) return "gave-up";
   await prisma.download.update({ where: { id }, data: { qbitHash: info.hash } });
   await publishProgress({
@@ -291,6 +326,7 @@ async function processDownload(id: string): Promise<void> {
     (expectedHash ? await qb.getByHash(expectedHash) : undefined) ?? (await qb.getByTag(id));
   if (!info) {
     const isMagnet = dl.magnet.startsWith("magnet:");
+    const beforeHashes = await categoryHashes(qb);
     await qb.addTorrent({
       magnet: isMagnet ? dl.magnet : undefined,
       torrentUrl: isMagnet ? undefined : dl.magnet,
@@ -298,7 +334,7 @@ async function processDownload(id: string): Promise<void> {
       category: CATEGORY,
       tag: id,
     });
-    info = await waitForTorrent(qb, id, expectedHash, REGISTER_TIMEOUT_MS);
+    info = await waitForTorrent(qb, id, expectedHash, dl.releaseName, beforeHashes, REGISTER_TIMEOUT_MS);
   }
   if (!info) throw new Error("Torrent failed to register in qBittorrent");
 
