@@ -17,7 +17,7 @@ import { readSSE, jsonFetch } from "@/lib/client";
 import { Markdown } from "@/components/markdown";
 import { OptionsList, type ChatOption } from "@/components/options-list";
 import { useConfirm } from "@/components/confirm-dialog";
-import { ActivityPanel } from "@/components/activity-panel";
+import { ActivityFeed } from "@/components/activity-feed";
 
 type Item =
   | { kind: "msg"; role: "user" | "assistant"; content: string }
@@ -289,7 +289,7 @@ export default function ChatPage() {
         </div>
       )}
 
-      <ActivityPanel />
+      <ActivityFeed />
 
       <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {items.length === 0 && (

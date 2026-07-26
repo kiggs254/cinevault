@@ -16,6 +16,7 @@ import { notify } from "../telegram/client";
 import type { Download } from "@prisma/client";
 import { enqueueDownload } from "../queue";
 import { publishProgress } from "../events";
+import { logActivity } from "../activity";
 import { toDTO } from "../serialize";
 import { cleanReleaseName } from "../util";
 import type {
@@ -230,9 +231,14 @@ export async function grabMovie(opts: {
   const cfg = await getConfig();
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
   const q = `${opts.title}${opts.year ? ` ${opts.year}` : ""}`;
+  void logActivity(`Searching sources for “${opts.title}”…`, { kind: "search", title: opts.title });
   const results = await prowlarr.search(q, { categories: categoriesForKind("MOVIE"), limit: 60 });
   const chosen = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.2 });
-  if (!chosen) return null;
+  if (!chosen) {
+    void logActivity(`No good source found for “${opts.title}”.`, { kind: "warn", title: opts.title });
+    return null;
+  }
+  void logActivity(`Queued “${opts.title}” — ${chosen.seeders ?? 0} seeders`, { kind: "queue", title: opts.title });
   return createDownload({
     releaseName: chosen.title,
     source: chosen.magnetUrl ?? chosen.downloadUrl ?? "",
@@ -313,6 +319,8 @@ export async function grabEpisode(o: {
 }): Promise<boolean> {
   const { prowlarr, cfg, show, ep } = o;
   const q = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
+  const label = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
+  void logActivity(`Searching sources — ${label}`, { kind: "search", title: show.title });
   // Wide limit: indexers fuzzy-return a flood of the show's other episodes, so the
   // specific one we want can be buried — a small cap silently skips it.
   const results = await prowlarr.search(q, {
@@ -329,7 +337,10 @@ export async function grabEpisode(o: {
       releaseTitleMatches(r.title, show.title),
   );
   const best = pickAutoRelease(matched, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
-  if (!best) return false;
+  if (!best) {
+    void logActivity(`No source yet — ${label}`, { kind: "warn", title: show.title });
+    return false;
+  }
   await createDownload({
     releaseName: best.title,
     source: best.magnetUrl ?? best.downloadUrl ?? "",
@@ -345,6 +356,7 @@ export async function grabEpisode(o: {
     tmdbId: show.tmdbId,
     query: q,
   });
+  void logActivity(`Queued ${label}`, { kind: "queue", title: show.title });
   if (o.notify !== false) {
     await notify(
       `⬇️ New episode: ${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` — ${ep.name}` : ""} → downloading.`,

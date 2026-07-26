@@ -149,6 +149,14 @@ export interface ProgressEvent {
   message?: string;
 }
 
+export interface ActivityEntry {
+  id: string;
+  at: string; // ISO timestamp
+  message: string;
+  kind?: string; // search | queue | download | upload | done | warn | switch | info
+  title?: string;
+}
+
 /* ------------------------------------------------------------------ *
  * Serialized download (BigInt -> number) for API responses            *
  * ------------------------------------------------------------------ */

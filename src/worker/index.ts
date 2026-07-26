@@ -17,7 +17,15 @@ import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
+import { logActivity } from "../lib/activity";
 import type { DownloadJobData, DownloadStatus, MediaKind } from "../lib/types";
+
+/** " S02E05" / " Season 2" / "" from a download row's season/episode. */
+function epTag(season: number | null, episode: number | null): string {
+  if (season == null) return "";
+  const s = `S${String(season).padStart(2, "0")}`;
+  return episode != null ? ` ${s}E${String(episode).padStart(2, "0")}` : ` Season ${season}`;
+}
 
 const CATEGORY = "moviehub";
 const POLL_MS = 2000;
@@ -317,6 +325,10 @@ async function processDownload(id: string): Promise<void> {
   const qb = new QbClient(cfg.qbit);
   await qb.ensureCategory(CATEGORY);
   await setStatus(id, "DOWNLOADING", dl.progress);
+  void logActivity(`Downloading ${dl.title}${epTag(dl.season, dl.episode)}…`, {
+    kind: "download",
+    title: dl.title,
+  });
 
   // Find the torrent by info-hash (survives qBittorrent's dedup, which keeps the
   // original tag) or by tag; add it only if genuinely absent.
@@ -345,6 +357,10 @@ async function processDownload(id: string): Promise<void> {
 
   // Organize + enrich, then upload.
   await setStatus(id, "UPLOADING", 0);
+  void logActivity(`Uploading ${dl.title}${epTag(dl.season, dl.episode)} to S3…`, {
+    kind: "upload",
+    title: dl.title,
+  });
   const organized = await organize({
     releaseName: dl.releaseName,
     kind: dl.kind as MediaKind,
@@ -403,6 +419,10 @@ async function processDownload(id: string): Promise<void> {
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
       : "";
   await notify(`✅ Download complete: ${organized.cleanTitle}${seLabel}`);
+  void logActivity(`✓ ${organized.cleanTitle}${seLabel} added to your library`, {
+    kind: "done",
+    title: organized.cleanTitle,
+  });
 
   if (cfg.prefs.deleteAfterUpload) {
     await qb.delete([info.hash], true).catch(() => {});
@@ -435,6 +455,7 @@ const worker = new Worker<DownloadJobData>(
     // background so the request returns immediately and searches are paced.
     if (job.name === "season-grab" && job.data.seasonGrab) {
       const g = job.data.seasonGrab;
+      void logActivity(`Grabbing Season ${g.season} of ${g.title}`, { kind: "info", title: g.title });
       try {
         const r = await grabSeason({
           tmdbId: g.tmdbId,

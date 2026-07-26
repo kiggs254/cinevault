@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { jsonFetch } from "@/lib/client";
-import type { DownloadDTO } from "@/lib/types";
+import type { DownloadDTO, ActivityEntry } from "@/lib/types";
 
 interface ProgressMsg {
   type: string;
@@ -19,6 +19,7 @@ interface ProgressMsg {
 /** Fetches the download list and keeps it live via the SSE event stream. */
 export function useDownloads() {
   const [downloads, setDownloads] = useState<DownloadDTO[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -36,6 +37,9 @@ export function useDownloads() {
 
   useEffect(() => {
     void refetch();
+    jsonFetch<{ items: ActivityEntry[] }>("/api/activity")
+      .then((d) => setActivity(d.items ?? []))
+      .catch(() => {});
     const es = new EventSource("/api/events");
     esRef.current = es;
     es.onopen = () => setConnected(true);
@@ -45,6 +49,11 @@ export function useDownloads() {
       try {
         e = JSON.parse(ev.data);
       } catch {
+        return;
+      }
+      if (e.type === "activity") {
+        const a = e as unknown as ActivityEntry;
+        if (a.id && a.message) setActivity((prev) => [a, ...prev.filter((x) => x.id !== a.id)].slice(0, 60));
         return;
       }
       if (e.type === "created" || e.type === "deleted") {
@@ -91,5 +100,5 @@ export function useDownloads() {
     [refetch],
   );
 
-  return { downloads, connected, loaded, refetch, remove, retry };
+  return { downloads, activity, connected, loaded, refetch, remove, retry };
 }
