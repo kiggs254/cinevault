@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import { createRedis } from "./redis";
-import type { DownloadJobData } from "./types";
+import type { DownloadJobData, SeasonGrabData } from "./types";
 
 export const DOWNLOAD_QUEUE = "downloads";
 
@@ -20,6 +20,15 @@ export function downloadQueue(): Queue<DownloadJobData> {
     });
   }
   return _queue;
+}
+
+/** Enqueue a background job that grabs a whole season (pack, or episode-by-episode). */
+export async function enqueueSeasonGrab(data: SeasonGrabData): Promise<void> {
+  await downloadQueue().add(
+    "season-grab",
+    { downloadId: "", seasonGrab: data },
+    { removeOnComplete: true, removeOnFail: true },
+  );
 }
 
 export async function enqueueDownload(downloadId: string): Promise<void> {

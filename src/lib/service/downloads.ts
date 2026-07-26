@@ -3,7 +3,7 @@ import { getConfig, type ResolvedConfig } from "../config";
 import { planQuery } from "../llm/search-planner";
 import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
-import { rankResults, pickAutoRelease, isSingleSeasonPack } from "../scoring/scorer";
+import { rankResults, pickAutoRelease, isSingleSeasonPack, isEpisodeMatch } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, type TmdbEpisode } from "../metadata/tmdb";
 import { notify } from "../telegram/client";
 import { enqueueDownload } from "../queue";
@@ -228,7 +228,10 @@ export async function grabEpisode(o: {
     limit: 40,
     indexerIds: o.indexerIds,
   });
-  const best = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+  // Indexers fuzzy-match, so a search for S01E01 can return the latest S09E05.
+  // Only accept releases that ARE this exact episode.
+  const matched = results.filter((r) => isEpisodeMatch(r.title, ep.seasonNumber, ep.episodeNumber));
+  const best = pickAutoRelease(matched, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
   if (!best) return false;
   await createDownload({
     releaseName: best.title,
@@ -475,8 +478,10 @@ export async function reSource(
     const h = resultHash(r);
     return !h || !exclude.has(h);
   });
-  // Season packs must still validate to exactly this season.
-  if (dl.kind === "TV" && dl.season != null && dl.episode == null) {
+  // Keep only releases that match what this download actually is.
+  if (dl.kind === "TV" && dl.season != null && dl.episode != null) {
+    pool = pool.filter((r) => isEpisodeMatch(r.title, dl.season!, dl.episode!));
+  } else if (dl.kind === "TV" && dl.season != null) {
     pool = pool.filter((r) => isSingleSeasonPack(r.title, dl.season!));
   }
   return pickAutoRelease(pool, { minSeeders: cfg.prefs.minSeeders, floorGB: floorForDownload(dl) });

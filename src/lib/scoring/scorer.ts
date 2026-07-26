@@ -103,6 +103,18 @@ export function isSingleSeasonPack(title: string, season: number): boolean {
   return seasonWordMatches(title, season);
 }
 
+/**
+ * True if the release is exactly this season+episode — "S01E05", "S1E5",
+ * "S01.E05", or "1x05" (zero-padding optional). Used to reject fuzzy matches so
+ * a search for S01E01 can't grab, say, the latest well-seeded S09E05 instead.
+ */
+export function isEpisodeMatch(title: string, season: number, episode: number): boolean {
+  if (season <= 0 || episode <= 0) return false;
+  const sxe = new RegExp(`\\bs0*${season}[\\s._-]*e0*${episode}(?!\\d)`, "i");
+  const nxn = new RegExp(`\\b0*${season}x0*${episode}(?!\\d)`, "i");
+  return sxe.test(title) || nxn.test(title);
+}
+
 /** "Season N" or bare "S0N" for exactly `season`, excluding "Season N Episode M". */
 function seasonWordMatches(title: string, season: number): boolean {
   if (new RegExp(`\\bseason[\\s._-]*0*${season}[\\s._-]*e`, "i").test(title)) return false; // "Season 2 Episode 5"

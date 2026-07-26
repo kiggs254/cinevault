@@ -12,7 +12,7 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
-import { reSource } from "../lib/service/downloads";
+import { reSource, grabSeason } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -426,6 +426,29 @@ const worker = new Worker<DownloadJobData>(
         console.log(`[worker] ${job.name}: ${JSON.stringify(s)}`);
       } catch (e) {
         console.error(`[worker] ${job.name} error:`, (e as Error).message);
+      }
+      return;
+    }
+    // Season grab: walk the season (pack, or episode-by-episode E01→last) in the
+    // background so the request returns immediately and searches are paced.
+    if (job.name === "season-grab" && job.data.seasonGrab) {
+      const g = job.data.seasonGrab;
+      try {
+        const r = await grabSeason({
+          tmdbId: g.tmdbId,
+          title: g.title,
+          season: g.season,
+          year: g.year,
+          indexerIds: g.indexerIds,
+          notify: g.notify,
+        });
+        console.log(`[worker] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
+        if (r.queued > 0) {
+          const what = r.mode === "pack" ? "the season pack" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
+          await notify(`📥 ${g.title} — Season ${g.season}: queued ${what}.`);
+        }
+      } catch (e) {
+        console.error(`[worker] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);
       }
       return;
     }

@@ -136,14 +136,16 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     setBusy(true);
     setMsg("");
     try {
-      const r = await jsonFetch<{ queued: string[]; failed: number[]; totalQueued?: number }>("/api/download/tmdb", {
+      const r = await jsonFetch<{ scheduled?: number; queued: string[] }>("/api/download/tmdb", {
         method: "POST",
         body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "tv", title: details?.title ?? seed.title, year: details?.year ?? seed.year, seasons: [...selected] }),
       });
-      const parts = [];
-      if (r.queued.length) parts.push(`Queued ${r.totalQueued ?? r.queued.length}: ${r.queued.join(", ")}`);
-      if (r.failed.length) parts.push(`no release for Season ${r.failed.join(", ")}`);
-      setMsg(parts.join(" · ") || "Nothing queued.");
+      const n = r.scheduled ?? r.queued.length;
+      setMsg(
+        n > 0
+          ? `Grabbing ${n} season${n === 1 ? "" : "s"} in the background — episodes appear in Downloads as they're found.`
+          : "Nothing to grab.",
+      );
     } catch (e) {
       setMsg((e as Error).message);
     } finally {

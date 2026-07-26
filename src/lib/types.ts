@@ -123,8 +123,18 @@ export interface ScoredResult extends TorrentResult {
  * Jobs + realtime events                                              *
  * ------------------------------------------------------------------ */
 
+export interface SeasonGrabData {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  season: number;
+  indexerIds?: number[];
+  notify?: boolean;
+}
+
 export interface DownloadJobData {
   downloadId: string;
+  seasonGrab?: SeasonGrabData;
 }
 
 export interface ProgressEvent {
