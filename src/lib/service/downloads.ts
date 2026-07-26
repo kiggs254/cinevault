@@ -94,6 +94,24 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
     throw new Error("Missing torrent source (magnet or .torrent URL)");
   }
   const title = (input.title && input.title.trim()) || cleanReleaseName(input.releaseName);
+
+  // Don't create a second row for a TV episode we already have — guards against
+  // duplicate episodes from repeated/concurrent season grabs or double-taps.
+  if (input.kind === "TV" && input.season != null && input.episode != null) {
+    const dup = await prisma.download.findFirst({
+      where: {
+        season: input.season,
+        episode: input.episode,
+        status: { notIn: ["FAILED", "CANCELLED"] },
+        OR: [
+          ...(input.tmdbId ? [{ tmdbId: input.tmdbId }] : []),
+          { title: { equals: title, mode: "insensitive" as const } },
+        ],
+      },
+    });
+    if (dup) return toDTO(dup);
+  }
+
   const infoHash =
     input.infoHash ??
     (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined);
@@ -231,9 +249,11 @@ export async function grabEpisode(o: {
 }): Promise<boolean> {
   const { prowlarr, cfg, show, ep } = o;
   const q = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
+  // Wide limit: indexers fuzzy-return a flood of the show's other episodes, so the
+  // specific one we want can be buried — a small cap silently skips it.
   const results = await prowlarr.search(q, {
     categories: categoriesForKind("TV"),
-    limit: 40,
+    limit: 100,
     indexerIds: o.indexerIds,
   });
   // Indexers fuzzy-match: a search for "Lucky S01E01" can return the latest
@@ -361,6 +381,28 @@ export async function grabSeason(opts: {
       });
       return { season: opts.season, mode: "pack", queued: 1, failed: 0, total: 1 };
     }
+  }
+
+  // Recent/ongoing season → follow the show (backdated to the season start) so the
+  // scanner backfills any episode we can't find right now and grabs new ones as
+  // they air. Idempotent; an existing follow is left untouched.
+  if (!olderThanYear) {
+    const airedTimes = available.map(airedTs).filter((t) => Number.isFinite(t));
+    const firstAired = airedTimes.length ? Math.min(...airedTimes) : (seasonAired ?? now);
+    await prisma.followedShow
+      .upsert({
+        where: { tmdbId: opts.tmdbId },
+        create: {
+          tmdbId: opts.tmdbId,
+          title: opts.title,
+          year: opts.year ?? null,
+          autoDownload: true,
+          source: "season-grab",
+          createdAt: new Date(firstAired - 2 * DAY),
+        },
+        update: {},
+      })
+      .catch(() => {});
   }
 
   // Episode-by-episode: every aired, not-yet-owned episode.

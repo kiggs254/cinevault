@@ -90,10 +90,10 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
       let grabbedThisShow = 0;
 
       for (const sn of seasons) {
-        if (grabbedThisShow >= 5) break;
+        if (grabbedThisShow >= 12) break;
         const eps = await getSeasonEpisodes(cfg.tmdb.apiKey, show.tmdbId, sn);
         for (const ep of eps) {
-          if (grabbedThisShow >= 5) break;
+          if (grabbedThisShow >= 12) break;
           if (!ep.airDate || ep.episodeNumber < 1) continue;
           const aired = new Date(`${ep.airDate}T00:00:00Z`).getTime();
           if (aired > availableCutoff) continue; // not yet available
