@@ -12,7 +12,7 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
-import { reSource, grabSeason } from "../lib/service/downloads";
+import { reSource, grabSeason, recoverStuckDownloads } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -410,6 +410,7 @@ async function processDownload(id: string): Promise<void> {
 }
 
 const MAINTENANCE: Record<string, () => Promise<unknown>> = {
+  "recover-stuck": recoverStuckDownloads,
   "watch-scan": scanWatches,
   "follow-scan": scanFollowedShows,
   "reco-refresh": refreshRecommendations,
@@ -471,7 +472,14 @@ const worker = new Worker<DownloadJobData>(
       // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
     }
   },
-  { connection: createRedis(), concurrency: DOWNLOAD_CONCURRENCY },
+  {
+    connection: createRedis(),
+    concurrency: DOWNLOAD_CONCURRENCY,
+    // A killed worker's in-flight jobs stall and are re-run on restart; allow
+    // several stalls so repeated redeploys mid-download don't fail the job.
+    stalledInterval: 30_000,
+    maxStalledCount: 5,
+  },
 );
 
 /**

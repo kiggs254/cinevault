@@ -561,6 +561,28 @@ export async function removeDownload(id: string): Promise<void> {
   await publishProgress({ type: "deleted", downloadId: id });
 }
 
+/**
+ * Re-queue downloads that were mid-flight when the worker died (e.g. a redeploy),
+ * detected by a stale updatedAt — the worker bumps updatedAt every couple seconds
+ * while genuinely working, so anything not updated recently is stranded. Run
+ * periodically so interrupted uploads/downloads self-heal without a manual
+ * redeploy. Idempotent: the job id is the download id.
+ */
+export async function recoverStuckDownloads(
+  staleMs = 5 * 60 * 1000,
+): Promise<{ requeued: number }> {
+  const cutoff = new Date(Date.now() - staleMs);
+  const stuck = await prisma.download.findMany({
+    where: {
+      status: { in: ["SEARCHING", "DOWNLOADING", "UPLOADING"] },
+      updatedAt: { lt: cutoff },
+    },
+    select: { id: true },
+  });
+  for (const d of stuck) await enqueueDownload(d.id);
+  return { requeued: stuck.length };
+}
+
 /** Fake-file floor (GB) by download kind — episodes are small, packs large. */
 function floorForDownload(dl: { kind: MediaKind; season: number | null; episode: number | null }): number {
   if (dl.kind === "TV") return dl.episode != null ? 0.05 : 0.3;

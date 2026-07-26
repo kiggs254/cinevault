@@ -46,7 +46,7 @@ export async function enqueueScan(): Promise<void> {
 
 /** Trigger any named maintenance job once, now. */
 export async function enqueueJob(
-  name: "watch-scan" | "follow-scan" | "reco-refresh" | "auto-follow" | "retention",
+  name: "watch-scan" | "follow-scan" | "reco-refresh" | "auto-follow" | "retention" | "recover-stuck",
 ): Promise<void> {
   await downloadQueue().add(
     name,
@@ -58,6 +58,7 @@ export async function enqueueJob(
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const REPEATABLES: { name: string; every: number; jobId: string }[] = [
+  { name: "recover-stuck", every: 5 * MIN, jobId: "recover-stuck-repeat" },
   { name: "watch-scan", every: 30 * MIN, jobId: "watch-scan-repeat" },
   { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
   { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
