@@ -14,7 +14,7 @@ import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../
 import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
 import type { Download } from "@prisma/client";
-import { enqueueDownload } from "../queue";
+import { enqueueDownload, enqueueEpisodeGrab } from "../queue";
 import { publishProgress } from "../events";
 import { logActivity } from "../activity";
 import { toDTO } from "../serialize";
@@ -25,6 +25,7 @@ import type {
   PlannedQuery,
   RankDecision,
   ScoredResult,
+  EpisodeGrabData,
 } from "../types";
 
 const GB = 1024 * 1024 * 1024;
@@ -496,35 +497,50 @@ export async function grabSeason(opts: {
       .catch(() => {});
   }
 
-  // Episode-by-episode: every aired, not-yet-owned episode.
+  // Episode-by-episode: enqueue a short grab job per aired, not-yet-owned episode.
+  // Fanning out (instead of searching them all in this one long job) keeps the grab
+  // worker cycling fast, so new requests are never stuck behind one season's walk.
   const owned = await ownedEpisodeKeys(opts.tmdbId, opts.title);
   let queued = 0;
-  let failed = 0;
   for (const ep of available) {
     if (owned.has(`${ep.seasonNumber}x${ep.episodeNumber}`)) continue;
-    const ok = await grabEpisode({
-      prowlarr,
-      cfg,
-      show: { title: opts.title, year: opts.year ?? null, tmdbId: opts.tmdbId },
-      ep,
+    await enqueueEpisodeGrab({
+      tmdbId: opts.tmdbId,
+      title: opts.title,
+      year: opts.year ?? null,
+      season: ep.seasonNumber,
+      episode: ep.episodeNumber,
+      name: ep.name ?? null,
       indexerIds: opts.indexerIds,
       notify: opts.notify,
     });
-    if (ok) {
-      queued++;
-      owned.add(`${ep.seasonNumber}x${ep.episodeNumber}`);
-    } else {
-      failed++;
-    }
+    queued++;
+    owned.add(`${ep.seasonNumber}x${ep.episodeNumber}`);
   }
   return {
     season: opts.season,
     mode: "episodes",
     queued,
-    failed,
+    failed: 0,
     total: available.length,
     reason: olderThanYear ? "pack not found → episodes" : undefined,
   };
+}
+
+/** Worker entry for an `episode-grab` job — resolve config, then search + queue one episode. */
+export async function runEpisodeGrab(data: EpisodeGrabData): Promise<boolean> {
+  if (data.season < 1 || data.episode < 1) return false;
+  const cfg = await getConfig();
+  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return false;
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  return grabEpisode({
+    prowlarr,
+    cfg,
+    show: { title: data.title, year: data.year, tmdbId: data.tmdbId },
+    ep: { seasonNumber: data.season, episodeNumber: data.episode, name: data.name ?? undefined },
+    indexerIds: data.indexerIds,
+    notify: data.notify,
+  });
 }
 
 export async function listDownloads(): Promise<DownloadDTO[]> {

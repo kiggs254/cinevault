@@ -1,32 +1,60 @@
 import { Queue } from "bullmq";
 import { createRedis } from "./redis";
-import type { DownloadJobData, SeasonGrabData } from "./types";
+import type { DownloadJobData, SeasonGrabData, EpisodeGrabData } from "./types";
 
 export const DOWNLOAD_QUEUE = "downloads";
+export const GRAB_QUEUE = "grabs";
 
-let _queue: Queue<DownloadJobData> | null = null;
+let _downloads: Queue<DownloadJobData> | null = null;
+let _grabs: Queue<DownloadJobData> | null = null;
 
-/** Lazily-constructed BullMQ queue for download jobs. */
+const DEFAULT_JOB_OPTS = {
+  attempts: 2,
+  backoff: { type: "exponential" as const, delay: 15_000 },
+  removeOnComplete: { count: 200 },
+  removeOnFail: { count: 200 },
+};
+
+/** Queue for the actual transfers (qBittorrent download → S3 upload). */
 export function downloadQueue(): Queue<DownloadJobData> {
-  if (!_queue) {
-    _queue = new Queue<DownloadJobData>(DOWNLOAD_QUEUE, {
+  if (!_downloads) {
+    _downloads = new Queue<DownloadJobData>(DOWNLOAD_QUEUE, {
       connection: createRedis(),
-      defaultJobOptions: {
-        attempts: 2,
-        backoff: { type: "exponential", delay: 15_000 },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
+      defaultJobOptions: DEFAULT_JOB_OPTS,
     });
   }
-  return _queue;
+  return _downloads;
 }
 
-/** Enqueue a background job that grabs a whole season (pack, or episode-by-episode). */
+/**
+ * Queue for planning/search work — season & episode grabs plus maintenance.
+ * Kept separate from downloads so long transfers never starve new searches: the
+ * agent stays ready to queue more even while things download in the background.
+ */
+export function grabQueue(): Queue<DownloadJobData> {
+  if (!_grabs) {
+    _grabs = new Queue<DownloadJobData>(GRAB_QUEUE, {
+      connection: createRedis(),
+      defaultJobOptions: DEFAULT_JOB_OPTS,
+    });
+  }
+  return _grabs;
+}
+
+/** Enqueue a background job that grabs a whole season (fans out into episodes). */
 export async function enqueueSeasonGrab(data: SeasonGrabData): Promise<void> {
-  await downloadQueue().add(
+  await grabQueue().add(
     "season-grab",
     { downloadId: "", seasonGrab: data },
+    { removeOnComplete: true, removeOnFail: true },
+  );
+}
+
+/** Enqueue a short job that finds + queues exactly one episode. */
+export async function enqueueEpisodeGrab(data: EpisodeGrabData): Promise<void> {
+  await grabQueue().add(
+    "episode-grab",
+    { downloadId: "", episodeGrab: data },
     { removeOnComplete: true, removeOnFail: true },
   );
 }
@@ -44,15 +72,11 @@ export async function enqueueScan(): Promise<void> {
   await enqueueJob("watch-scan");
 }
 
-/** Trigger any named maintenance job once, now. */
+/** Trigger any named maintenance job once, now (runs on the grab worker). */
 export async function enqueueJob(
   name: "watch-scan" | "follow-scan" | "reco-refresh" | "auto-follow" | "retention" | "recover-stuck",
 ): Promise<void> {
-  await downloadQueue().add(
-    name,
-    { downloadId: "" },
-    { removeOnComplete: true, removeOnFail: true },
-  );
+  await grabQueue().add(name, { downloadId: "" }, { removeOnComplete: true, removeOnFail: true });
 }
 
 const MIN = 60 * 1000;
@@ -65,21 +89,27 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "retention", every: 24 * HOUR, jobId: "retention-repeat" },
 ];
 
-/** Register all recurring maintenance jobs (idempotent by repeat jobId). */
+/** Register all recurring maintenance jobs on the grab queue (idempotent). */
 export async function schedulePeriodicJobs(): Promise<void> {
-  const q = downloadQueue();
-  // Self-heal: drop any previously-scheduled repeatable that's no longer wanted
-  // (e.g. the retired watch-scan), so removing it from REPEATABLES actually stops it.
+  const dq = downloadQueue();
+  const gq = grabQueue();
   const wanted = new Set(REPEATABLES.map((r) => r.name));
+  // Repeatables live on the grab queue now: drop any left on the download queue
+  // (older builds registered them there), and any stale one on the grab queue.
   try {
-    for (const j of await q.getRepeatableJobs()) {
-      if (!wanted.has(j.name)) await q.removeRepeatableByKey(j.key).catch(() => {});
+    for (const j of await dq.getRepeatableJobs()) await dq.removeRepeatableByKey(j.key).catch(() => {});
+  } catch {
+    /* best-effort */
+  }
+  try {
+    for (const j of await gq.getRepeatableJobs()) {
+      if (!wanted.has(j.name)) await gq.removeRepeatableByKey(j.key).catch(() => {});
     }
   } catch {
     /* best-effort */
   }
   for (const r of REPEATABLES) {
-    await q.add(r.name, { downloadId: "" }, { repeat: { every: r.every }, jobId: r.jobId });
+    await gq.add(r.name, { downloadId: "" }, { repeat: { every: r.every }, jobId: r.jobId });
   }
 }
 

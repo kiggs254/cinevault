@@ -2,7 +2,7 @@ import "dotenv/config";
 import path from "node:path";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
+import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
 import { scanWatches } from "../lib/service/watches";
 import { scanFollowedShows, autoFollowFromJellyfin } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
@@ -12,7 +12,7 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
-import { reSource, grabSeason, recoverStuckDownloads } from "../lib/service/downloads";
+import { reSource, grabSeason, recoverStuckDownloads, runEpisodeGrab } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -40,6 +40,8 @@ const MAX_RESOURCE_ATTEMPTS = 3; // source swaps before giving up
 // NOTE: qBittorrent's own "Maximum active downloads" must be >= this value, or
 // it will queue torrents past its limit even though the worker started them.
 const DOWNLOAD_CONCURRENCY = Math.max(1, Math.floor(Number(process.env.DOWNLOAD_CONCURRENCY)) || 6);
+// Search/grab work runs on its own pool so it never waits behind long transfers.
+const GRAB_CONCURRENCY = Math.max(1, Math.floor(Number(process.env.GRAB_CONCURRENCY)) || 4);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -438,21 +440,51 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   retention: runRetention,
 };
 
+// Transfer worker: only the actual downloads (qBittorrent → S3). Kept on its own
+// pool so a burst of these long jobs can't starve searches/new grabs.
 const worker = new Worker<DownloadJobData>(
   DOWNLOAD_QUEUE,
+  async (job: Job<DownloadJobData>) => {
+    const { downloadId } = job.data;
+    try {
+      await processDownload(downloadId);
+    } catch (e) {
+      const message = (e as Error).message ?? "Unknown error";
+      console.error(`[worker] download ${downloadId} failed:`, message);
+      await prisma.download
+        .update({ where: { id: downloadId }, data: { status: "FAILED", error: message } })
+        .catch(() => {});
+      await publishProgress({ type: "status", downloadId, status: "FAILED", message });
+      // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
+    }
+  },
+  {
+    connection: createRedis(),
+    concurrency: DOWNLOAD_CONCURRENCY,
+    // A killed worker's in-flight jobs stall and are re-run on restart; allow
+    // several stalls so repeated redeploys mid-download don't fail the job.
+    stalledInterval: 30_000,
+    maxStalledCount: 5,
+  },
+);
+
+// Grab worker: season/episode searches + maintenance. Short jobs on a separate
+// pool, so the agent is always ready to queue more even while downloads run.
+const grabWorker = new Worker<DownloadJobData>(
+  GRAB_QUEUE,
   async (job: Job<DownloadJobData>) => {
     const maintenance = MAINTENANCE[job.name];
     if (maintenance) {
       try {
         const s = await maintenance();
-        console.log(`[worker] ${job.name}: ${JSON.stringify(s)}`);
+        console.log(`[grab] ${job.name}: ${JSON.stringify(s)}`);
       } catch (e) {
-        console.error(`[worker] ${job.name} error:`, (e as Error).message);
+        console.error(`[grab] ${job.name} error:`, (e as Error).message);
       }
       return;
     }
-    // Season grab: walk the season (pack, or episode-by-episode E01→last) in the
-    // background so the request returns immediately and searches are paced.
+    // Season grab: plan the season and fan out one short episode-grab job each,
+    // so this job returns fast and never holds a slot for the whole season.
     if (job.name === "season-grab" && job.data.seasonGrab) {
       const g = job.data.seasonGrab;
       void logActivity(`Grabbing Season ${g.season} of ${g.title}`, { kind: "info", title: g.title });
@@ -465,39 +497,29 @@ const worker = new Worker<DownloadJobData>(
           indexerIds: g.indexerIds,
           notify: g.notify,
         });
-        console.log(`[worker] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
+        console.log(`[grab] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
         if (r.queued > 0) {
           const what = r.mode === "pack" ? "the season pack" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
           await notify(`📥 ${g.title} — Season ${g.season}: queued ${what}.`);
         }
       } catch (e) {
-        console.error(`[worker] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);
+        console.error(`[grab] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);
       }
       return;
     }
-    const { downloadId } = job.data;
-    try {
-      await processDownload(downloadId);
-    } catch (e) {
-      const message = (e as Error).message ?? "Unknown error";
-      console.error(`[worker] download ${downloadId} failed:`, message);
-      await prisma.download
-        .update({ where: { id: downloadId }, data: { status: "FAILED", error: message } })
-        .catch(() => {});
-      await publishProgress({
-        type: "status",
-        downloadId,
-        status: "FAILED",
-        message,
-      });
-      // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
+    if (job.name === "episode-grab" && job.data.episodeGrab) {
+      const ep = job.data.episodeGrab;
+      try {
+        await runEpisodeGrab(ep);
+      } catch (e) {
+        console.error(`[grab] episode-grab ${ep.title} S${ep.season}E${ep.episode} failed:`, (e as Error).message);
+      }
+      return;
     }
   },
   {
     connection: createRedis(),
-    concurrency: DOWNLOAD_CONCURRENCY,
-    // A killed worker's in-flight jobs stall and are re-run on restart; allow
-    // several stalls so repeated redeploys mid-download don't fail the job.
+    concurrency: GRAB_CONCURRENCY,
     stalledInterval: 30_000,
     maxStalledCount: 5,
   },
@@ -524,7 +546,7 @@ async function recoverInterrupted(): Promise<void> {
 }
 
 worker.on("ready", () => {
-  console.log(`[worker] ready, waiting for jobs (concurrency=${DOWNLOAD_CONCURRENCY})`);
+  console.log(`[worker] ready — downloads×${DOWNLOAD_CONCURRENCY}, grabs×${GRAB_CONCURRENCY}`);
   void recoverInterrupted();
   void schedulePeriodicJobs()
     .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))
@@ -533,10 +555,11 @@ worker.on("ready", () => {
   console.log("[worker] telegram bot poller started");
 });
 worker.on("error", (err) => console.error("[worker] error:", err));
+grabWorker.on("error", (err) => console.error("[grab] error:", err));
 
 async function shutdown() {
   console.log("[worker] shutting down…");
-  await worker.close();
+  await Promise.allSettled([worker.close(), grabWorker.close()]);
   await prisma.$disconnect();
   process.exit(0);
 }

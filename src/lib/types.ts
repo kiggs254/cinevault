@@ -132,9 +132,20 @@ export interface SeasonGrabData {
   notify?: boolean;
 }
 
+export interface EpisodeGrabData {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  season: number;
+  episode: number;
+  name?: string | null;
+  indexerIds?: number[];
+  notify?: boolean;
+}
 export interface DownloadJobData {
   downloadId: string;
   seasonGrab?: SeasonGrabData;
+  episodeGrab?: EpisodeGrabData;
 }
 
 export interface ProgressEvent {

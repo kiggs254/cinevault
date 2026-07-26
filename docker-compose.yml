@@ -46,6 +46,7 @@ services:
       PROWLARR_URL: ${PROWLARR_URL:-http://prowlarr:9696}
       DOWNLOAD_DIR: /data/downloads
       DOWNLOAD_CONCURRENCY: ${DOWNLOAD_CONCURRENCY:-6}
+      GRAB_CONCURRENCY: ${GRAB_CONCURRENCY:-4}
     volumes:
       - downloads:/data/downloads
     depends_on:
