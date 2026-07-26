@@ -85,7 +85,7 @@ export default function LibraryPage() {
         <p className="text-sm text-faint">Loading…</p>
       ) : titles.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-faint">
-          Nothing archived yet. Downloads appear here once they finish uploading to S3.
+          Nothing downloaded yet. Downloads appear here once they finish uploading to S3.
         </p>
       ) : (
         <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6">

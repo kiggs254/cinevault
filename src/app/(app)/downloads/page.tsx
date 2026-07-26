@@ -23,7 +23,7 @@ function statusMeta(s: DownloadStatus): { label: string; color: string } {
     case "UPLOADING":
       return { label: "Uploading", color: "var(--color-accent)" };
     case "COMPLETED":
-      return { label: "Archived", color: "var(--color-success)" };
+      return { label: "Downloaded", color: "var(--color-success)" };
     case "FAILED":
       return { label: "Failed", color: "var(--color-danger)" };
     case "PAUSED":
@@ -187,7 +187,7 @@ function GroupCard({
             Season {season} · {eps.length} episode{eps.length === 1 ? "" : "s"}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-            {done > 0 && <span className="text-success">{done} archived</span>}
+            {done > 0 && <span className="text-success">{done} downloaded</span>}
             {active > 0 && <span className="text-accent">{active} downloading</span>}
             {failed > 0 && <span className="text-danger">{failed} failed</span>}
           </div>

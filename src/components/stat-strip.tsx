@@ -14,7 +14,7 @@ export function StatStrip({ downloads }: { downloads: DownloadDTO[] }) {
 
   const tiles = [
     { label: "Active", value: String(active), icon: Activity, color: "var(--color-accent)", mono: false },
-    { label: "Archived", value: String(completed.length), icon: CheckCircle2, color: "var(--color-success)", mono: false },
+    { label: "Downloaded", value: String(completed.length), icon: CheckCircle2, color: "var(--color-success)", mono: false },
     {
       label: "Failed",
       value: String(failed),

@@ -30,7 +30,7 @@ function meta(s: DownloadStatus): { label: string; color: string } {
     case "UPLOADING":
       return { label: "Uploading", color: "var(--color-accent)" };
     case "COMPLETED":
-      return { label: "Archived", color: "var(--color-success)" };
+      return { label: "Downloaded", color: "var(--color-success)" };
     case "FAILED":
       return { label: "Failed", color: "var(--color-danger)" };
     case "PAUSED":
@@ -234,7 +234,7 @@ export function DownloadRow({
               if (
                 await confirm({
                   title: "Remove download?",
-                  message: `“${d.title}” will be removed and its archived file deleted from storage.`,
+                  message: `“${d.title}” will be removed and its downloaded file deleted from storage.`,
                   confirmLabel: "Remove",
                 })
               ) {

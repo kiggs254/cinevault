@@ -222,7 +222,7 @@ export function EpisodeBrowser({
                     </button>
                   ) : e.owned ? (
                     <span className="flex items-center gap-1 text-[11px] text-success">
-                      <Check size={13} /> {completed ? "Archived" : "Downloading"}
+                      <Check size={13} /> {completed ? "Downloaded" : "Downloading"}
                     </span>
                   ) : onDownloadEpisode ? (
                     <button
