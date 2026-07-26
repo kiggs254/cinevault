@@ -10,11 +10,29 @@ import {
   discoverByGenres,
   getGenres,
   searchTitle,
+  getLatestTopRated,
   type TmdbTitle,
   type TmdbMediaType,
 } from "../metadata/tmdb";
 
 const SEED_LIMIT = 10;
+
+const SOURCE_REASON: Record<string, string> = {
+  related: "Related to what you watch",
+  trending: "Trending now",
+  new: "New release",
+  genre: "In a genre you like",
+  random: "A wildcard pick",
+};
+
+/** In-place Fisher–Yates shuffle. */
+function shuffle<T>(a: T[]): T[] {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 /** Recompute the taste profile from watch + download history and persist it. */
 export async function refreshTasteProfile(): Promise<void> {
@@ -88,16 +106,29 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
     }
   }
 
-  // Build the candidate pool from TMDB (real, current titles).
+  // Build a varied candidate pool from TMDB (real, current titles), tagging each
+  // by where it came from so wildcards can carry a human reason.
   const pool = new Map<string, TmdbTitle>();
-  const addAll = (arr: TmdbTitle[]) => {
-    for (const t of arr) if (!exclude.has(t.tmdbId)) pool.set(`${t.mediaType}:${t.tmdbId}`, t);
+  const sources = new Map<string, string>();
+  const addAll = (arr: TmdbTitle[], source: string) => {
+    for (const t of arr) {
+      if (exclude.has(t.tmdbId)) continue;
+      const key = `${t.mediaType}:${t.tmdbId}`;
+      if (!pool.has(key)) {
+        pool.set(key, t);
+        sources.set(key, source);
+      }
+    }
   };
   for (const s of seeds.slice(0, SEED_LIMIT)) {
-    addAll(await getRecommendations(apiKey, s.type, s.id));
-    addAll(await getSimilar(apiKey, s.type, s.id));
+    addAll(await getRecommendations(apiKey, s.type, s.id), "related");
+    addAll(await getSimilar(apiKey, s.type, s.id), "related");
   }
-  addAll(await getTrending(apiKey, "all"));
+  addAll(await getTrending(apiKey, "all"), "trending");
+  // Fresh + serendipitous: new releases and a couple of random genres keep the feed
+  // dynamic and full even with little taste data.
+  addAll(await getLatestTopRated(apiKey, "movie"), "new");
+  addAll(await getLatestTopRated(apiKey, "tv"), "new");
   if (profile?.favoriteGenres?.length) {
     for (const type of ["tv", "movie"] as TmdbMediaType[]) {
       const genres = await getGenres(apiKey, type);
@@ -105,21 +136,42 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
         .map((g) => genres.find((x) => x.name.toLowerCase() === g.toLowerCase())?.id)
         .filter((n): n is number => !!n)
         .slice(0, 3);
-      if (ids.length) addAll(await discoverByGenres(apiKey, type, ids));
+      if (ids.length) addAll(await discoverByGenres(apiKey, type, ids), "genre");
     }
+  }
+  for (const type of ["tv", "movie"] as TmdbMediaType[]) {
+    const genres = await getGenres(apiKey, type);
+    const randomIds = shuffle([...genres]).slice(0, 2).map((g) => g.id);
+    if (randomIds.length) addAll(await discoverByGenres(apiKey, type, randomIds), "random");
   }
 
   const candidates = [...pool.values()];
   if (candidates.length === 0) return { count: 0, reason: "No candidates — watch or download something first" };
 
-  const ranked = await rankRecommendations(profile, candidates, 30);
+  // A curated core (AI-ranked, with reasons) plus random wildcards from the rest.
+  const ranked = await rankRecommendations(profile, candidates, 18);
+  const picks: { c: TmdbTitle; reason: string; score: number }[] = [];
+  const seen = new Set<string>();
+  for (const pick of ranked.picks) {
+    const c = candidates[pick.index];
+    if (!c) continue;
+    const key = `${c.mediaType}:${c.tmdbId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    picks.push({ c, reason: pick.reason || SOURCE_REASON[sources.get(key) ?? "random"], score: pick.score });
+  }
+  const rest = shuffle(candidates.filter((c) => !seen.has(`${c.mediaType}:${c.tmdbId}`)));
+  for (const c of rest.slice(0, 16)) {
+    const key = `${c.mediaType}:${c.tmdbId}`;
+    seen.add(key);
+    picks.push({ c, reason: SOURCE_REASON[sources.get(key) ?? "random"], score: 50 + Math.floor(Math.random() * 30) });
+  }
 
   // Replace the previous "new" feed; keep dismissed/added history.
   await prisma.recommendation.deleteMany({ where: { status: "new" } });
   let count = 0;
-  for (const pick of ranked.picks) {
-    const c = candidates[pick.index];
-    if (!c) continue;
+  for (const p of picks) {
+    const c = p.c;
     try {
       await prisma.recommendation.upsert({
         where: { tmdbId_mediaType: { tmdbId: c.tmdbId, mediaType: c.mediaType } },
@@ -128,8 +180,8 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
           year: c.year ?? null,
           posterUrl: c.posterUrl ?? null,
           overview: c.overview ?? null,
-          reason: pick.reason || null,
-          score: pick.score,
+          reason: p.reason,
+          score: p.score,
           status: "new",
         },
         create: {
@@ -139,8 +191,8 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
           year: c.year ?? null,
           posterUrl: c.posterUrl ?? null,
           overview: c.overview ?? null,
-          reason: pick.reason || null,
-          score: pick.score,
+          reason: p.reason,
+          score: p.score,
           source: "ai",
           status: "new",
         },

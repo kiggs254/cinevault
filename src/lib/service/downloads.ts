@@ -10,7 +10,7 @@ import {
   isEpisodeMatch,
   releaseTitleMatches,
 } from "../scoring/scorer";
-import { getSeasonEpisodes, getTvDetails, type TmdbEpisode } from "../metadata/tmdb";
+import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
 import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
 import type { Download } from "@prisma/client";
@@ -86,6 +86,34 @@ export interface CreateDownloadInput {
   episode?: number | null;
   tmdbId?: number | null;
   query?: string | null;
+  posterUrl?: string | null;
+  overview?: string | null;
+}
+
+// Cache TMDB poster/overview by title so per-episode grabs don't each re-fetch.
+const metaCache = new Map<string, { posterUrl: string | null; overview: string | null; at: number }>();
+async function cachedTitleMeta(
+  apiKey: string,
+  kind: MediaKind,
+  tmdbId: number,
+): Promise<{ posterUrl: string | null; overview: string | null }> {
+  const type = kind === "TV" ? "tv" : "movie";
+  const key = `${type}:${tmdbId}`;
+  const hit = metaCache.get(key);
+  if (hit && Date.now() - hit.at < 6 * 60 * 60 * 1000) {
+    return { posterUrl: hit.posterUrl, overview: hit.overview };
+  }
+  let posterUrl: string | null = null;
+  let overview: string | null = null;
+  try {
+    const t = await getTitle(apiKey, type, tmdbId);
+    posterUrl = t?.posterUrl ?? null;
+    overview = t?.overview ?? null;
+  } catch {
+    /* metadata is best-effort */
+  }
+  metaCache.set(key, { posterUrl, overview, at: Date.now() });
+  return { posterUrl, overview };
 }
 
 /** Persist a download and enqueue it for the worker. */
@@ -112,6 +140,19 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
     if (dup) return toDTO(dup);
   }
 
+  // Grab poster + overview up front (cached) so they appear while downloading,
+  // not only after the upload completes.
+  let posterUrl = input.posterUrl ?? null;
+  let overview = input.overview ?? null;
+  if (!posterUrl && input.tmdbId && (input.kind === "TV" || input.kind === "MOVIE")) {
+    const cfg = await getConfig();
+    if (cfg.tmdb.apiKey) {
+      const m = await cachedTitleMeta(cfg.tmdb.apiKey, input.kind, input.tmdbId);
+      posterUrl = m.posterUrl;
+      overview = m.overview;
+    }
+  }
+
   const infoHash =
     input.infoHash ??
     (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined);
@@ -125,6 +166,8 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
       season: input.season ?? null,
       episode: input.episode ?? null,
       tmdbId: input.tmdbId ?? null,
+      posterUrl,
+      overview,
       query: input.query ?? null,
       indexer: input.indexer ?? null,
       infoHash: infoHash ?? null,

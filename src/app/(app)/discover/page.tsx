@@ -14,6 +14,7 @@ import {
   Tv,
   Check,
   Settings2,
+  RefreshCw,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
@@ -118,6 +119,8 @@ export default function DiscoverPage() {
   const [wKind, setWKind] = useState("TV");
   const confirm = useConfirm();
   const [seed, setSeed] = useState<TitleSeed | null>(null);
+  const [tab, setTab] = useState<"foryou" | "following">("foryou");
+  const [showTaste, setShowTaste] = useState(false);
 
   const openRec = (r: Rec) =>
     setSeed({ tmdbId: r.tmdbId, mediaType: r.mediaType, title: r.title, year: r.year, posterUrl: r.posterUrl });
@@ -128,7 +131,12 @@ export default function DiscoverPage() {
         "/api/recommendations",
       )
         .then((d) => {
-          setRecs(d.recommendations);
+          const shuffled = [...d.recommendations];
+          for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+          }
+          setRecs(shuffled);
           setTaste(d.taste);
           setHasTmdb(d.hasTmdb);
           setHasJellyfin(d.hasJellyfin);
@@ -283,8 +291,14 @@ export default function DiscoverPage() {
             Discover
           </h1>
         </div>
-        <button className="btn btn-accent" onClick={refreshRecs} disabled={refreshing}>
-          {refreshing ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Refresh picks
+        <button
+          className="btn btn-ghost px-3 py-1.5 text-xs text-muted"
+          onClick={refreshRecs}
+          disabled={refreshing}
+          title="Refresh picks"
+        >
+          {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </header>
 
@@ -296,26 +310,50 @@ export default function DiscoverPage() {
         </p>
       )}
 
-      {/* Taste banner */}
-      {taste?.summary && (
-        <section className="panel mb-6 p-5">
-          <div className="mb-2 flex items-center gap-2">
-            <Sparkles size={15} className="text-accent" />
-            <h2 className="text-sm font-semibold text-ink">Your taste</h2>
-            {!hasJellyfin && <span className="badge">connect Jellyfin for better picks</span>}
-          </div>
-          <p className="text-sm text-muted">{taste.summary}</p>
-          {!!taste.favoriteGenres?.length && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {taste.favoriteGenres.map((g) => (
-                <span key={g} className="badge">{g}</span>
-              ))}
+      {/* Tabs */}
+      <div className="mb-6 flex gap-2">
+        {(["foryou", "following"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+              tab === t ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
+            }`}
+          >
+            {t === "foryou" ? "For You" : `Following${follows.length ? ` · ${follows.length}` : ""}`}
+          </button>
+        ))}
+      </div>
+
+      {/* Your taste — collapsed by default */}
+      {tab === "foryou" && taste?.summary && (
+        <div className="mb-5">
+          <button
+            className="flex items-center gap-1.5 text-xs text-muted hover:text-ink"
+            onClick={() => setShowTaste((v) => !v)}
+          >
+            <Sparkles size={13} className="text-accent" /> Your taste {showTaste ? "▲" : "▼"}
+          </button>
+          {showTaste && (
+            <div className="panel mt-2 p-4">
+              <p className="text-sm text-muted">{taste.summary}</p>
+              {!hasJellyfin && (
+                <p className="mt-2 text-xs text-faint">Connect Jellyfin in Settings for sharper picks.</p>
+              )}
+              {!!taste.favoriteGenres?.length && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {taste.favoriteGenres.map((g) => (
+                    <span key={g} className="badge">{g}</span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </section>
+        </div>
       )}
 
       {/* Following */}
+      {tab === "following" && (
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
           <Tv size={16} className="text-accent" />
@@ -403,12 +441,14 @@ export default function DiscoverPage() {
           </div>
         )}
       </section>
+      )}
 
       {/* Recommendations */}
+      {tab === "foryou" && (
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
           <Sparkles size={16} className="text-accent" />
-          <h2 className="label">Recommended for you</h2>
+          <h2 className="label">For you</h2>
           <span className="badge">{recs.length}</span>
         </div>
 
@@ -434,7 +474,7 @@ export default function DiscoverPage() {
                       </div>
                     )}
                     <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">
-                      {r.mediaType === "tv" ? "TV" : "Movie"} · {r.score}%
+                      {r.mediaType === "tv" ? "TV" : "Movie"}
                     </span>
                   </div>
                   <div className="p-3">
@@ -457,6 +497,7 @@ export default function DiscoverPage() {
           </div>
         )}
       </section>
+      )}
 
       {/* Automation & sources (advanced, collapsed) */}
       <section className="mt-10 border-t border-border pt-6">
