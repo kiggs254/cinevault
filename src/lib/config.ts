@@ -29,6 +29,12 @@ export interface ResolvedConfig {
     deleteAfterUpload: boolean;
     downloadDir: string;
   };
+  profile: {
+    interests: string[];
+    autoGrabEnabled: boolean;
+    autoGrabThreshold: number;
+    legalIndexerIds: number[];
+  };
 }
 
 /** Keys that must be encrypted at rest. */
@@ -114,6 +120,16 @@ export async function getConfig(): Promise<ResolvedConfig> {
           ? settings.deleteAfterUpload
           : boolEnv(env.DELETE_AFTER_UPLOAD, true),
       downloadDir: env.DOWNLOAD_DIR,
+    },
+    profile: {
+      interests: Array.isArray(settings.interests)
+        ? (settings.interests as unknown[]).filter((x): x is string => typeof x === "string")
+        : [],
+      autoGrabEnabled: settings.autoGrabEnabled === true,
+      autoGrabThreshold: num(settings.autoGrabThreshold, 80),
+      legalIndexerIds: Array.isArray(settings.legalIndexerIds)
+        ? (settings.legalIndexerIds as unknown[]).map(Number).filter((n) => !Number.isNaN(n))
+        : [],
     },
   };
 }

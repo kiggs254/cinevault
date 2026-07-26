@@ -36,13 +36,14 @@ export class ProwlarrClient {
 
   async search(
     query: string,
-    opts: { categories?: number[]; limit?: number } = {},
+    opts: { categories?: number[]; limit?: number; indexerIds?: number[] } = {},
   ): Promise<TorrentResult[]> {
     const params = new URLSearchParams();
     params.set("query", query);
     params.set("type", "search");
     params.set("limit", String(opts.limit ?? 60));
     for (const c of opts.categories ?? []) params.append("categories", String(c));
+    for (const id of opts.indexerIds ?? []) params.append("indexerIds", String(id));
 
     const res = await fetch(`${this.base}/api/v1/search?${params.toString()}`, {
       headers: { "X-Api-Key": this.apiKey, Accept: "application/json" },
@@ -61,6 +62,23 @@ export class ProwlarrClient {
       headers: { "X-Api-Key": this.apiKey },
     });
     return res.ok;
+  }
+
+  /** List configured indexers so the user can pick which ones automation may use. */
+  async listIndexers(): Promise<
+    { id: number; name: string; privacy?: string; enable?: boolean }[]
+  > {
+    const res = await fetch(`${this.base}/api/v1/indexer`, {
+      headers: { "X-Api-Key": this.apiKey, Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`Prowlarr indexers failed: ${res.status}`);
+    const data = (await res.json()) as Array<{
+      id: number;
+      name: string;
+      privacy?: string;
+      enable?: boolean;
+    }>;
+    return data.map((i) => ({ id: i.id, name: i.name, privacy: i.privacy, enable: i.enable }));
   }
 }
 

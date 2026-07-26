@@ -82,3 +82,50 @@ model ChatSession {
 
   @@index([updatedAt])
 }
+
+enum WatchType {
+  SEARCH
+  RSS
+}
+
+/// A tracked, auto-refreshed source: a saved indexer query or an RSS/Atom feed
+/// from a LAWFUL source. The scheduler re-runs it and (optionally) auto-grabs
+/// new matches.
+model Watch {
+  id         String    @id @default(cuid())
+  type       WatchType @default(SEARCH)
+  label      String
+  query      String? // for SEARCH watches
+  feedUrl    String? // for RSS watches
+  kind       MediaKind @default(OTHER)
+  quality    String    @default("any")
+  minSeeders Int       @default(1)
+  autoGrab   Boolean   @default(true)
+  enabled    Boolean   @default(true)
+  lastRunAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+/// A discovered release (from a watch scan or discovery search). Surfaced in the
+/// "What's New" feed and optionally auto-grabbed when it matches the profile.
+model FeedItem {
+  id          String    @id @default(cuid())
+  watchId     String?
+  dedupeKey   String    @unique
+  title       String
+  source      String?
+  link        String?
+  magnet      String?   @db.Text
+  infoHash    String?
+  size        BigInt    @default(0)
+  seeders     Int?
+  kind        MediaKind @default(OTHER)
+  matchScore  Int       @default(0)
+  status      String    @default("new") // new | grabbed | dismissed
+  publishDate DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+}

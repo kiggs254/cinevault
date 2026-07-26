@@ -2,7 +2,8 @@ import "dotenv/config";
 import path from "node:path";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE, enqueueDownload } from "../lib/queue";
+import { DOWNLOAD_QUEUE, enqueueDownload, scheduleScans } from "../lib/queue";
+import { scanWatches } from "../lib/service/watches";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
@@ -223,6 +224,15 @@ async function processDownload(id: string): Promise<void> {
 const worker = new Worker<DownloadJobData>(
   DOWNLOAD_QUEUE,
   async (job: Job<DownloadJobData>) => {
+    if (job.name === "watch-scan") {
+      try {
+        const s = await scanWatches();
+        console.log(`[worker] scan complete: ${JSON.stringify(s)}`);
+      } catch (e) {
+        console.error("[worker] scan error:", (e as Error).message);
+      }
+      return;
+    }
     const { downloadId } = job.data;
     try {
       await processDownload(downloadId);
@@ -267,6 +277,9 @@ async function recoverInterrupted(): Promise<void> {
 worker.on("ready", () => {
   console.log("[worker] ready, waiting for jobs");
   void recoverInterrupted();
+  void scheduleScans()
+    .then(() => console.log("[worker] watch scans scheduled (every 30m)"))
+    .catch(() => {});
 });
 worker.on("error", (err) => console.error("[worker] error:", err));
 

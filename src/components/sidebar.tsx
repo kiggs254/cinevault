@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Clapperboard, Library, Sparkles, Settings2, LogOut } from "lucide-react";
+import { Clapperboard, Library, Compass, Sparkles, Settings2, LogOut } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 
 const NAV = [
   { href: "/", label: "Command", icon: Clapperboard },
   { href: "/library", label: "Library", icon: Library },
+  { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];

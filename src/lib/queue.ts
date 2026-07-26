@@ -29,3 +29,21 @@ export async function enqueueDownload(downloadId: string): Promise<void> {
   await q.remove(downloadId).catch(() => {});
   await q.add("download", { downloadId }, { jobId: downloadId });
 }
+
+/** Trigger a one-off watch/discovery scan now. */
+export async function enqueueScan(): Promise<void> {
+  await downloadQueue().add(
+    "watch-scan",
+    { downloadId: "" },
+    { removeOnComplete: true, removeOnFail: true },
+  );
+}
+
+/** Register the recurring watch/discovery scan (idempotent by repeat jobId). */
+export async function scheduleScans(): Promise<void> {
+  await downloadQueue().add(
+    "watch-scan",
+    { downloadId: "" },
+    { repeat: { every: 30 * 60 * 1000 }, jobId: "watch-scan-repeat" },
+  );
+}
