@@ -3,7 +3,13 @@ import { getConfig, type ResolvedConfig } from "../config";
 import { planQuery } from "../llm/search-planner";
 import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
-import { rankResults, pickAutoRelease, isSingleSeasonPack, isEpisodeMatch } from "../scoring/scorer";
+import {
+  rankResults,
+  pickAutoRelease,
+  isSingleSeasonPack,
+  isEpisodeMatch,
+  releaseTitleMatches,
+} from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, type TmdbEpisode } from "../metadata/tmdb";
 import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
@@ -230,9 +236,14 @@ export async function grabEpisode(o: {
     limit: 40,
     indexerIds: o.indexerIds,
   });
-  // Indexers fuzzy-match, so a search for S01E01 can return the latest S09E05.
-  // Only accept releases that ARE this exact episode.
-  const matched = results.filter((r) => isEpisodeMatch(r.title, ep.seasonNumber, ep.episodeNumber));
+  // Indexers fuzzy-match: a search for "Lucky S01E01" can return the latest
+  // S09E05, or a different show ("Lucky Hank S01E01"). Require BOTH the exact
+  // episode AND the show title to match.
+  const matched = results.filter(
+    (r) =>
+      isEpisodeMatch(r.title, ep.seasonNumber, ep.episodeNumber) &&
+      releaseTitleMatches(r.title, show.title),
+  );
   const best = pickAutoRelease(matched, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
   if (!best) return false;
   await createDownload({
@@ -268,7 +279,9 @@ async function findSeasonPack(
   const cats = categoriesForKind("TV");
   for (const q of [`${title} Season ${season}`, `${title} S${pad2(season)}`]) {
     const results = await prowlarr.search(q, { categories: cats, limit: 60 });
-    const packs = results.filter((r) => isSingleSeasonPack(r.title, season));
+    const packs = results.filter(
+      (r) => isSingleSeasonPack(r.title, season) && releaseTitleMatches(r.title, title),
+    );
     const chosen = pickAutoRelease(packs, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.3 });
     if (chosen) return chosen;
   }
@@ -505,9 +518,13 @@ export async function reSource(
   });
   // Keep only releases that match what this download actually is.
   if (dl.kind === "TV" && dl.season != null && dl.episode != null) {
-    pool = pool.filter((r) => isEpisodeMatch(r.title, dl.season!, dl.episode!));
+    pool = pool.filter(
+      (r) => isEpisodeMatch(r.title, dl.season!, dl.episode!) && releaseTitleMatches(r.title, dl.title),
+    );
   } else if (dl.kind === "TV" && dl.season != null) {
-    pool = pool.filter((r) => isSingleSeasonPack(r.title, dl.season!));
+    pool = pool.filter(
+      (r) => isSingleSeasonPack(r.title, dl.season!) && releaseTitleMatches(r.title, dl.title),
+    );
   }
   return pickAutoRelease(pool, { minSeeders: cfg.prefs.minSeeders, floorGB: floorForDownload(dl) });
 }

@@ -115,6 +115,34 @@ export function isEpisodeMatch(title: string, season: number, episode: number): 
   return sxe.test(title) || nxn.test(title);
 }
 
+/** Lowercase, alphanumeric-only form of a title for comparison. */
+function normShow(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// The show-name portion of a release ends at the first season/episode/year/pack marker.
+const RELEASE_MARKER =
+  /^(.*?)[-\s._([]*\b(?:s\d{1,2}(?:[\s._-]*e\d{1,3})?|\d{1,2}x\d{1,3}|season[\s._-]*\d{1,2}|complete|(?:19|20)\d{2})\b/i;
+
+function releaseShowPart(releaseName: string): string {
+  const m = releaseName.match(RELEASE_MARKER);
+  return m ? m[1] : releaseName;
+}
+
+/**
+ * True if a release is for exactly this show — its leading title must match, so a
+ * search for "Lucky" does NOT accept "Lucky Hank". Tolerates dot/space separators
+ * and a trailing country tag (e.g. "The Office US" for "The Office").
+ */
+export function releaseTitleMatches(releaseName: string, showTitle: string): boolean {
+  const want = normShow(showTitle);
+  if (!want) return false;
+  const rel = normShow(releaseShowPart(releaseName));
+  if (rel === want) return true;
+  const stripped = rel.replace(/(?:us|uk|au|nz|ca)$/, "");
+  return stripped.length >= 2 && stripped === want;
+}
+
 /** "Season N" or bare "S0N" for exactly `season`, excluding "Season N Episode M". */
 function seasonWordMatches(title: string, season: number): boolean {
   if (new RegExp(`\\bseason[\\s._-]*0*${season}[\\s._-]*e`, "i").test(title)) return false; // "Season 2 Episode 5"
