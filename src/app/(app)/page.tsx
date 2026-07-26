@@ -203,7 +203,7 @@ export default function HomePage() {
                     Show all <ChevronRight size={13} />
                   </Link>
                 </div>
-                <div className="flex gap-3 overflow-x-auto pb-2">
+                <div className="no-scrollbar flex gap-3 overflow-x-auto pb-2">
                   {row.items.map((i) => (
                     <Poster key={`${i.mediaType}-${i.tmdbId}`} item={i} onClick={() => open(i)} />
                   ))}

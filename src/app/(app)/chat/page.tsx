@@ -221,11 +221,11 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[100dvh] max-w-3xl flex-col px-5 py-6 md:h-screen md:px-10">
+    <div className="mx-auto flex h-full max-w-3xl flex-col px-4 py-4 sm:px-5 sm:py-6 md:h-screen md:px-10">
       <header className="mb-4 flex items-end justify-between gap-3">
         <div>
           <p className="label">Assistant</p>
-          <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+          <h1 className="text-3xl text-ink sm:text-5xl" style={{ fontFamily: "var(--font-display)" }}>
             Chat
           </h1>
         </div>

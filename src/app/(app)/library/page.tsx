@@ -65,11 +65,11 @@ export default function LibraryPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 md:px-10">
+    <div className="mx-auto max-w-6xl px-5 py-6 sm:py-8 md:px-10">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
           <p className="label">Storage</p>
-          <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+          <h1 className="text-4xl text-ink sm:text-5xl" style={{ fontFamily: "var(--font-display)" }}>
             Library
           </h1>
         </div>
@@ -110,8 +110,8 @@ export default function LibraryPage() {
 
       {/* Detail modal */}
       {active && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={() => setActive(null)}>
-          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={() => setActive(null)}>
+          <div className="sheet-card max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-4 border-b border-border p-5">
               <div className="h-28 w-20 flex-none overflow-hidden rounded-lg bg-surface-2">
                 {active.posterUrl && (

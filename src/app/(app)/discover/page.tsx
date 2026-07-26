@@ -268,11 +268,11 @@ export default function DiscoverPage() {
 
   /* ------------------------------- render ------------------------------ */
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 md:px-10">
+    <div className="mx-auto max-w-6xl px-5 py-6 sm:py-8 md:px-10">
       <header className="mb-6 flex items-end justify-between gap-4">
         <div>
           <p className="label">For you</p>
-          <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+          <h1 className="text-4xl text-ink sm:text-5xl" style={{ fontFamily: "var(--font-display)" }}>
             Discover
           </h1>
         </div>
@@ -354,7 +354,7 @@ export default function DiscoverPage() {
             Not following anything yet. Search above, or shows you watch in Jellyfin get followed automatically.
           </p>
         ) : (
-          <div className="flex gap-4 overflow-x-auto pb-2">
+          <div className="no-scrollbar flex gap-4 overflow-x-auto pb-2">
             {follows.map((f) => (
               <div key={f.id} className="w-32 flex-none">
                 <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2">

@@ -354,3 +354,71 @@
   border-top: 1px solid var(--color-border);
   margin: 0.8rem 0;
 }
+
+/* ========================================================================== *
+ *  Mobile ergonomics — unlayered rules deliberately win over Tailwind utils
+ * ========================================================================== */
+
+/* No grey tap-flash on touch (focus-visible ring is kept for a11y). */
+a,
+button,
+[role="button"],
+label,
+select,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Momentum scroll + hidden scrollbar for horizontal poster rows. */
+.no-scrollbar {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  /* 16px inputs stop iOS zoom-on-focus. */
+  input,
+  select,
+  textarea,
+  .input {
+    font-size: 16px;
+  }
+  /* Comfortable minimum tap target for every button (incl. icon-only). */
+  .btn {
+    min-height: 44px;
+  }
+}
+
+/* --- Bottom-sheet modals on phones --------------------------------------- */
+@media (max-width: 767px) {
+  .sheet {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .sheet-card {
+    width: 100%;
+    max-width: none;
+    max-height: 92dvh;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-card {
+    animation: none;
+  }
+}

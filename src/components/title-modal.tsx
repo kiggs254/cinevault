@@ -179,9 +179,9 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const showMetaStrip = !!(rating || details?.certification || runtimeLabel || dateLabel);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
+    <div className="sheet fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
       <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-hidden overflow-y-auto rounded-2xl border border-border bg-surface"
+        className="sheet-card max-h-[90vh] w-full max-w-2xl overflow-hidden overflow-y-auto rounded-2xl border border-border bg-surface"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Backdrop */}
