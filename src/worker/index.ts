@@ -2,7 +2,7 @@ import "dotenv/config";
 import path from "node:path";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE } from "../lib/queue";
+import { DOWNLOAD_QUEUE, enqueueDownload } from "../lib/queue";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
@@ -244,7 +244,30 @@ const worker = new Worker<DownloadJobData>(
   { connection: createRedis(), concurrency: 3 },
 );
 
-worker.on("ready", () => console.log("[worker] ready, waiting for jobs"));
+/**
+ * On startup, re-queue any downloads the DB still thinks are in progress. A
+ * deploy/restart kills the worker mid-download or mid-upload, leaving them
+ * stranded; this resumes them (idempotent — the torrent is found by hash/tag).
+ */
+async function recoverInterrupted(): Promise<void> {
+  try {
+    const stuck = await prisma.download.findMany({
+      where: { status: { in: ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"] } },
+      select: { id: true },
+    });
+    for (const d of stuck) await enqueueDownload(d.id);
+    if (stuck.length) {
+      console.log(`[worker] re-queued ${stuck.length} interrupted download(s) after restart`);
+    }
+  } catch (e) {
+    console.error("[worker] recovery failed:", (e as Error).message);
+  }
+}
+
+worker.on("ready", () => {
+  console.log("[worker] ready, waiting for jobs");
+  void recoverInterrupted();
+});
 worker.on("error", (err) => console.error("[worker] error:", err));
 
 async function shutdown() {
