@@ -1,7 +1,17 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Sparkles, Send, Loader2, Search, CheckCircle2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Sparkles,
+  Send,
+  Loader2,
+  Search,
+  CheckCircle2,
+  History,
+  Plus,
+  Trash2,
+  MessageSquare,
+} from "lucide-react";
 import Link from "next/link";
 import { readSSE, jsonFetch } from "@/lib/client";
 import { Markdown } from "@/components/markdown";
@@ -12,6 +22,12 @@ type Item =
   | { kind: "options"; id: string; title: string; options: ChatOption[] }
   | { kind: "action"; text: string };
 
+interface SessionMeta {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 let counter = 0;
 const uid = () => `b${++counter}`;
 
@@ -21,14 +37,24 @@ const SUGGESTIONS = [
   "Grab the latest Alpine standard ISO",
 ];
 
+function deriveTitle(items: Item[]): string {
+  const firstUser = items.find((i) => i.kind === "msg" && i.role === "user");
+  const t = firstUser && firstUser.kind === "msg" ? firstUser.content.trim() : "";
+  return t ? t.slice(0, 60) : "New chat";
+}
+
 export default function ChatPage() {
   const [items, setItems] = useState<Item[]>([]);
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [trace, setTrace] = useState<string[]>([]);
   const [pickingKey, setPickingKey] = useState<string | null>(null);
   const [donePicks, setDonePicks] = useState<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement>(null);
+  const skipSave = useRef(false);
 
   function scrollDown() {
     requestAnimationFrame(() =>
@@ -36,10 +62,95 @@ export default function ChatPage() {
     );
   }
 
+  async function loadSessions(): Promise<SessionMeta[]> {
+    try {
+      const d = await jsonFetch<{ sessions: SessionMeta[] }>("/api/chat/sessions");
+      setSessions(d.sessions);
+      return d.sessions;
+    } catch {
+      return [];
+    }
+  }
+
+  async function loadSession(id: string) {
+    try {
+      const d = await jsonFetch<{ session: { id: string; title: string; items: Item[] } }>(
+        `/api/chat/sessions/${id}`,
+      );
+      skipSave.current = true; // don't immediately re-save what we just loaded
+      setItems(Array.isArray(d.session.items) ? d.session.items : []);
+      setSessionId(id);
+      setDonePicks(new Set());
+      setShowHistory(false);
+      scrollDown();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Load the most recent session on mount.
+  useEffect(() => {
+    (async () => {
+      const list = await loadSessions();
+      if (list.length) await loadSession(list[0].id);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced auto-save of the current session.
+  useEffect(() => {
+    if (!sessionId || items.length === 0) return;
+    if (skipSave.current) {
+      skipSave.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      void fetch(`/api/chat/sessions/${sessionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, title: deriveTitle(items) }),
+      })
+        .then(() => loadSessions())
+        .catch(() => {});
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, sessionId]);
+
+  async function ensureSession(): Promise<string> {
+    if (sessionId) return sessionId;
+    const { id } = await jsonFetch<{ id: string }>("/api/chat/sessions", { method: "POST" });
+    setSessionId(id);
+    void loadSessions();
+    return id;
+  }
+
+  async function newChat() {
+    const { id } = await jsonFetch<{ id: string }>("/api/chat/sessions", { method: "POST" });
+    skipSave.current = true;
+    setItems([]);
+    setDonePicks(new Set());
+    setSessionId(id);
+    setShowHistory(false);
+    void loadSessions();
+  }
+
+  async function deleteSession(id: string) {
+    await fetch(`/api/chat/sessions/${id}`, { method: "DELETE" }).catch(() => {});
+    const list = await loadSessions();
+    if (id === sessionId) {
+      skipSave.current = true;
+      setItems([]);
+      setSessionId(list[0]?.id ?? null);
+      if (list[0]) await loadSession(list[0].id);
+    }
+  }
+
   async function send(e?: React.FormEvent) {
     e?.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
+    await ensureSession();
     const next: Item[] = [...items, { kind: "msg", role: "user", content: text }];
     setItems(next);
     setInput("");
@@ -111,21 +222,64 @@ export default function ChatPage() {
 
   return (
     <div className="mx-auto flex h-[100dvh] max-w-3xl flex-col px-5 py-6 md:h-screen md:px-10">
-      <header className="mb-4">
-        <p className="label">Assistant</p>
-        <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
-          Chat
-        </h1>
+      <header className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <p className="label">Assistant</p>
+          <h1 className="text-5xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+            Chat
+          </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="btn btn-ghost" onClick={() => setShowHistory((v) => !v)}>
+            <History size={15} /> <span className="hidden sm:inline">History</span>
+          </button>
+          <button className="btn btn-ghost" onClick={newChat}>
+            <Plus size={15} /> <span className="hidden sm:inline">New</span>
+          </button>
+        </div>
       </header>
+
+      {showHistory && (
+        <div className="panel mb-3 max-h-60 overflow-y-auto">
+          {sessions.length === 0 ? (
+            <p className="p-4 text-sm text-faint">No past chats yet.</p>
+          ) : (
+            <div className="divide-y divide-[color:var(--color-border)]">
+              {sessions.map((s) => (
+                <div
+                  key={s.id}
+                  className={`flex items-center gap-2 px-3 py-2.5 ${
+                    s.id === sessionId ? "bg-surface-2" : ""
+                  }`}
+                >
+                  <MessageSquare size={14} className="flex-none text-muted" />
+                  <button
+                    className="min-w-0 flex-1 truncate text-left text-sm text-ink"
+                    onClick={() => loadSession(s.id)}
+                  >
+                    {s.title}
+                  </button>
+                  <button
+                    className="flex-none text-faint hover:text-danger"
+                    title="Delete chat"
+                    onClick={() => deleteSession(s.id)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {items.length === 0 && (
           <div className="panel rise p-6">
             <Sparkles className="mb-3 text-accent" size={22} />
             <p className="text-sm text-muted">
-              Ask me to find media and I&apos;ll show you a **tappable list** of results — pick one to
-              download it straight to your storage. I can also grab batches (&ldquo;all of a
-              show&apos;s season&rdquo;).
+              Ask me to find media and I&apos;ll show a tappable list of results — pick one to
+              download it. Chats are saved, so you can leave and come back.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {SUGGESTIONS.map((s) => (
@@ -174,7 +328,6 @@ export default function ChatPage() {
               />
             );
           }
-          // action
           return (
             <div key={i} className="flex items-center gap-2 text-xs text-success">
               <CheckCircle2 size={14} /> {it.text} —{" "}

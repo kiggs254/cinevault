@@ -70,3 +70,15 @@ model AppConfig {
   settings  Json? // non-secret preferences + endpoints
   updatedAt DateTime @updatedAt
 }
+
+/// A persisted assistant conversation. `items` holds the ordered chat items
+/// (messages, option lists, actions) as JSON so the UI restores exactly.
+model ChatSession {
+  id        String   @id @default(cuid())
+  title     String   @default("New chat")
+  items     Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
