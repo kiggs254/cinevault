@@ -1,8 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getConfig } from "@/lib/config";
+import { getMovieDetails, getTvDetails } from "@/lib/metadata/tmdb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Genres aren't stored per download, so resolve them from TMDB on demand and
+// cache per title for the process lifetime (the library is a bounded set).
+const genreCache = new Map<number, string[]>();
+async function titleGenres(apiKey: string, tmdbId: number, kind: string): Promise<string[]> {
+  const cached = genreCache.get(tmdbId);
+  if (cached) return cached;
+  try {
+    const d = kind === "TV" ? await getTvDetails(apiKey, tmdbId) : await getMovieDetails(apiKey, tmdbId);
+    const genres = (d?.genres ?? []).slice(0, 4);
+    genreCache.set(tmdbId, genres);
+    return genres;
+  } catch {
+    return [];
+  }
+}
 
 interface Item {
   id: string;
@@ -20,6 +38,7 @@ interface Group {
   year: number | null;
   kind: string;
   tmdbId: number | null;
+  genres: string[];
   count: number;
   sizeBytes: number;
   items: Item[];
@@ -44,6 +63,7 @@ export async function GET() {
         year: d.year,
         kind: d.kind,
         tmdbId: d.tmdbId,
+        genres: [],
         count: 0,
         sizeBytes: 0,
         items: [],
@@ -64,8 +84,18 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json(
-    { titles: [...groups.values()] },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  const titles = [...groups.values()];
+
+  // Enrich with genres (cached) so the library can filter by them.
+  const cfg = await getConfig();
+  if (cfg.tmdb.apiKey) {
+    const key = cfg.tmdb.apiKey;
+    await Promise.all(
+      titles.map(async (g) => {
+        if (g.tmdbId) g.genres = await titleGenres(key, g.tmdbId, g.kind);
+      }),
+    );
+  }
+
+  return NextResponse.json({ titles }, { headers: { "Cache-Control": "no-store" } });
 }

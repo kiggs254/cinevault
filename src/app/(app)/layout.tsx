@@ -1,11 +1,13 @@
 import { Sidebar, MobileTopBar, MobileBottomNav } from "@/components/sidebar";
 import { DownloadsProvider } from "@/components/downloads-context";
 import { ConfirmProvider } from "@/components/confirm-dialog";
+import { ScrollActivity } from "@/components/scroll-activity";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <DownloadsProvider>
       <ConfirmProvider>
+      <ScrollActivity />
       <div className="md:flex md:min-h-screen">
         <Sidebar />
         {/* Mobile: a fixed-height app shell — top bar, scrollable content, bottom tabs.

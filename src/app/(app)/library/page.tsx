@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Search as SearchIcon } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
@@ -22,6 +22,7 @@ interface TitleGroup {
   year: number | null;
   kind: string;
   tmdbId: number | null;
+  genres: string[];
   count: number;
   sizeBytes: number;
   items: Item[];
@@ -38,6 +39,25 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [active, setActive] = useState<TitleGroup | null>(null);
+  const [type, setType] = useState<"all" | "movie" | "tv">("all");
+  const [genre, setGenre] = useState("");
+  const [query, setQuery] = useState("");
+
+  const allGenres = useMemo(
+    () => [...new Set(titles.flatMap((t) => t.genres ?? []))].sort((a, b) => a.localeCompare(b)),
+    [titles],
+  );
+  const shown = useMemo(
+    () =>
+      titles.filter((t) => {
+        if (type === "movie" && t.kind !== "MOVIE") return false;
+        if (type === "tv" && t.kind !== "TV") return false;
+        if (genre && !(t.genres ?? []).includes(genre)) return false;
+        if (query.trim() && !t.title.toLowerCase().includes(query.trim().toLowerCase())) return false;
+        return true;
+      }),
+    [titles, type, genre, query],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,25 +108,77 @@ export default function LibraryPage() {
           Nothing downloaded yet. Downloads appear here once they finish uploading to S3.
         </p>
       ) : (
-        <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6">
-          {titles.map((t) => (
-            <button key={t.key} onClick={() => setActive(t)} className="group text-left" title={t.title}>
-              <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2 transition-transform group-hover:scale-[1.04] group-hover:border-accent">
-                {t.posterUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={t.posterUrl} alt={t.title} className="h-full w-full object-cover" loading="lazy" />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-faint">
-                    {t.kind === "TV" ? <Tv size={22} /> : <Film size={22} />}
+        <>
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["all", "All"],
+                ["movie", "Movies"],
+                ["tv", "TV"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setType(v)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  type === v ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            {allGenres.length > 0 && (
+              <select
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                className="input w-auto py-1.5 text-xs"
+                aria-label="Filter by genre"
+              >
+                <option value="">All genres</option>
+                {allGenres.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="relative ml-auto">
+              <SearchIcon size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+              <input
+                className="input w-40 py-1.5 pl-8 text-xs"
+                placeholder="Filter titles…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {shown.length === 0 ? (
+            <p className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-faint">
+              No titles match these filters.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-6">
+              {shown.map((t) => (
+                <button key={t.key} onClick={() => setActive(t)} className="group text-left" title={t.title}>
+                  <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2 transition-transform group-hover:scale-[1.04] group-hover:border-accent">
+                    {t.posterUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={t.posterUrl} alt={t.title} className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-faint">
+                        {t.kind === "TV" ? <Tv size={22} /> : <Film size={22} />}
+                      </div>
+                    )}
+                    <span className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t.count}</span>
                   </div>
-                )}
-                <span className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t.count}</span>
-              </div>
-              <p className="mt-1.5 truncate text-xs text-ink">{t.title}</p>
-              <p className="mono truncate text-[11px] text-faint">{formatBytes(t.sizeBytes)}</p>
-            </button>
-          ))}
-        </div>
+                  <p className="mt-1.5 truncate text-xs text-ink">{t.title}</p>
+                  <p className="mono truncate text-[11px] text-faint">{formatBytes(t.sizeBytes)}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Detail modal */}

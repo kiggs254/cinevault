@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut, Clapperboard } from "lucide-react";
+import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut, Clapperboard, Search as SearchIcon } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { SearchOverlay } from "@/components/search-overlay";
 
 const NAV = [
   { href: "/", label: "Home", icon: Home },
@@ -67,17 +68,22 @@ function useSystems() {
   ];
 }
 
-function Wordmark() {
+function Wordmark({ compact }: { compact?: boolean }) {
+  const text = compact ? "text-2xl" : "text-3xl";
   return (
     <Link href="/" className="flex items-center gap-2 leading-none">
-      <span className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-lg border border-border bg-surface-2 text-accent">
-        <Clapperboard size={18} />
+      <span
+        className={`inline-flex flex-none items-center justify-center rounded-lg border border-border bg-surface-2 text-accent ${
+          compact ? "h-7 w-7" : "h-8 w-8"
+        }`}
+      >
+        <Clapperboard size={compact ? 16 : 18} />
       </span>
       <span className="flex items-baseline gap-1">
-        <span className="text-3xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+        <span className={`${text} text-ink`} style={{ fontFamily: "var(--font-display)" }}>
           CINE
         </span>
-        <span className="text-3xl text-accent" style={{ fontFamily: "var(--font-display)" }}>
+        <span className={`${text} text-accent`} style={{ fontFamily: "var(--font-display)" }}>
           VAULT
         </span>
       </span>
@@ -159,23 +165,30 @@ export function Sidebar() {
 export function MobileTopBar() {
   const pathname = usePathname();
   const logout = useLogout();
+  const [searchOpen, setSearchOpen] = useState(false);
   return (
-    <header className="flex flex-none items-center justify-between border-b border-border bg-bg/80 px-4 pb-2.5 pt-[calc(0.625rem+env(safe-area-inset-top))] backdrop-blur md:hidden">
-      <Wordmark />
-      <div className="flex items-center gap-1">
-        <ThemeToggle size={20} className="rounded-lg p-2 text-muted" />
-        <Link
-          href="/settings"
-          aria-label="Settings"
-          className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
-        >
-          <Settings2 size={20} />
-        </Link>
-        <button onClick={logout} aria-label="Sign out" className="rounded-lg p-2 text-muted">
-          <LogOut size={20} />
-        </button>
-      </div>
-    </header>
+    <>
+      <header className="flex flex-none items-center justify-between gap-2 border-b border-border bg-bg/80 px-4 pb-2.5 pt-[calc(0.625rem+env(safe-area-inset-top))] backdrop-blur md:hidden">
+        <Wordmark compact />
+        <div className="flex flex-none items-center gap-0.5">
+          <button onClick={() => setSearchOpen(true)} aria-label="Search" className="rounded-lg p-2 text-muted">
+            <SearchIcon size={19} />
+          </button>
+          <ThemeToggle size={19} className="rounded-lg p-2 text-muted" />
+          <Link
+            href="/settings"
+            aria-label="Settings"
+            className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
+          >
+            <Settings2 size={19} />
+          </Link>
+          <button onClick={logout} aria-label="Sign out" className="rounded-lg p-2 text-muted">
+            <LogOut size={19} />
+          </button>
+        </div>
+      </header>
+      {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
+    </>
   );
 }
 
