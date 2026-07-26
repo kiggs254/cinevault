@@ -4,6 +4,7 @@ import { ProwlarrClient } from "../indexers/prowlarr";
 import { grabEpisode, ownedEpisodeKeys } from "./downloads";
 import { notify } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
+import { enqueueSeasonGrab } from "../queue";
 import { getWatchingSeries, jellyfinReady } from "../jellyfin/client";
 import type { FollowedShow } from "@prisma/client";
 
@@ -20,7 +21,7 @@ export async function followShow(
   if (existing) return existing;
   const d = await getTvDetails(cfg.tmdb.apiKey, tmdbId);
   if (!d) return null;
-  return prisma.followedShow.create({
+  const created = await prisma.followedShow.create({
     data: {
       tmdbId,
       title: d.title,
@@ -33,6 +34,22 @@ export async function followShow(
       source: opts.source ?? "manual",
     },
   });
+  // On follow, download the LATEST released season now; the scanner then keeps it
+  // topped up and moves forward when a new season airs.
+  const today = new Date().toISOString().slice(0, 10);
+  const released = d.seasons
+    .filter((s) => s.seasonNumber >= 1 && !!s.airDate && s.airDate <= today && s.episodeCount > 0)
+    .map((s) => s.seasonNumber);
+  if (released.length && (opts.autoDownload ?? true)) {
+    await enqueueSeasonGrab({
+      tmdbId,
+      title: d.title,
+      year: d.year ?? null,
+      season: Math.max(...released),
+      notify: false,
+    }).catch(() => {});
+  }
+  return created;
 }
 
 export async function unfollowShow(id: string): Promise<void> {
@@ -82,10 +99,16 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
       const details = await getTvDetails(cfg.tmdb.apiKey, show.tmdbId);
       if (!details) continue;
       const windowStart = show.createdAt.getTime() - 2 * DAY;
-      const seasons = details.seasons
-        .map((s) => s.seasonNumber)
-        .sort((a, b) => b - a)
-        .slice(0, 2); // latest two seasons only
+      // Only track the latest RELEASED season — that's what "follow" downloads;
+      // when a new season starts airing it automatically becomes the target.
+      const today = new Date().toISOString().slice(0, 10);
+      const releasedSeasons = details.seasons.filter(
+        (s) => s.seasonNumber >= 1 && !!s.airDate && s.airDate <= today && s.episodeCount > 0,
+      );
+      const latestSeason = releasedSeasons.length
+        ? Math.max(...releasedSeasons.map((s) => s.seasonNumber))
+        : null;
+      const seasons = latestSeason != null ? [latestSeason] : [];
       const owned = await ownedEpisodeKeys(show.tmdbId, show.title);
       let grabbedThisShow = 0;
 

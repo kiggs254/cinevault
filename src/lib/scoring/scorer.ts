@@ -115,6 +115,12 @@ export function isEpisodeMatch(title: string, season: number, episode: number): 
   return sxe.test(title) || nxn.test(title);
 }
 
+/** True if the release is any episode of this season (S01E…). */
+export function isSeasonEpisode(title: string, season: number): boolean {
+  if (season <= 0) return false;
+  return new RegExp(`\\bs0*${season}[\\s._-]*e\\d`, "i").test(title);
+}
+
 /** Lowercase, alphanumeric-only form of a title for comparison. */
 function normShow(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "");

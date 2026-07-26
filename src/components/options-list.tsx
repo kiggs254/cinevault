@@ -14,6 +14,7 @@ export interface ChatOption {
 /** WhatsApp-style selectable list of options rendered inside the chat / rows. */
 export function OptionsList({
   title,
+  posterUrl,
   options,
   actionIcon = "download",
   busyId,
@@ -21,6 +22,7 @@ export function OptionsList({
   onSelect,
 }: {
   title?: string;
+  posterUrl?: string;
   options: ChatOption[];
   actionIcon?: "download" | "chevron";
   busyId?: string | null;
@@ -29,8 +31,14 @@ export function OptionsList({
 }) {
   return (
     <div className="panel overflow-hidden">
-      {title && (
-        <p className="label border-b border-border px-4 py-2.5">{title}</p>
+      {(title || posterUrl) && (
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-2.5">
+          {posterUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={posterUrl} alt="" className="h-11 w-8 flex-none rounded object-cover" />
+          )}
+          {title && <p className="label">{title}</p>}
+        </div>
       )}
       <div className="divide-y divide-[color:var(--color-border)]">
         {options.map((o) => {

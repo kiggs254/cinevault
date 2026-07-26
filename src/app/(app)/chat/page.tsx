@@ -20,7 +20,7 @@ import { useConfirm } from "@/components/confirm-dialog";
 
 type Item =
   | { kind: "msg"; role: "user" | "assistant"; content: string }
-  | { kind: "options"; id: string; title: string; options: ChatOption[] }
+  | { kind: "options"; id: string; title: string; options: ChatOption[]; posterUrl?: string }
   | { kind: "action"; text: string };
 
 interface SessionMeta {
@@ -33,9 +33,9 @@ let counter = 0;
 const uid = () => `b${++counter}`;
 
 const SUGGESTIONS = [
-  "Find Debian 12 netinst",
-  "Show me Ubuntu 24.04 options",
-  "Grab the latest Alpine standard ISO",
+  "Hijack season 1",
+  "Download Dune Part Two",
+  "The Bear latest season",
 ];
 
 function deriveTitle(items: Item[]): string {
@@ -191,7 +191,16 @@ export default function ChatPage() {
             payload: o.download,
           }));
           if (options.length) {
-            setItems((p) => [...p, { kind: "options", id: uid(), title: String(ev.title), options }]);
+            setItems((p) => [
+              ...p,
+              {
+                kind: "options",
+                id: uid(),
+                title: String(ev.title),
+                options,
+                posterUrl: ev.posterUrl ? String(ev.posterUrl) : undefined,
+              },
+            ]);
             scrollDown();
           }
         } else if (ev.type === "error") {
@@ -284,8 +293,8 @@ export default function ChatPage() {
           <div className="panel rise p-6">
             <Sparkles className="mb-3 text-accent" size={22} />
             <p className="text-sm text-muted">
-              Ask me to find media and I&apos;ll show a tappable list of results — pick one to
-              download it. Chats are saved, so you can leave and come back.
+              Ask for a movie or show and I&apos;ll find the best releases — tap one to download.
+              Chats are saved, so you can leave and come back.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               {SUGGESTIONS.map((s) => (
@@ -327,6 +336,7 @@ export default function ChatPage() {
               <OptionsList
                 key={it.id}
                 title={it.title}
+                posterUrl={it.posterUrl}
                 options={it.options}
                 busyId={busyId}
                 doneIds={doneIds}
@@ -337,8 +347,8 @@ export default function ChatPage() {
           return (
             <div key={i} className="flex items-center gap-2 text-xs text-success">
               <CheckCircle2 size={14} /> {it.text} —{" "}
-              <Link href="/" className="underline hover:text-ink">
-                track on Command
+              <Link href="/downloads" className="underline hover:text-ink">
+                track in Downloads
               </Link>
             </div>
           );
