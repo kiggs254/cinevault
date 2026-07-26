@@ -93,6 +93,18 @@ services:
     expose:
       - "9696"
 
+  # Cloudflare challenge solver for Prowlarr. Reached internally as
+  # http://flaresolverr:8191 (same compose network) — no host port, no domain.
+  # Runs a headless Chrome, so allow ~300-700MB RAM while it solves a challenge.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    expose:
+      - "8191"
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

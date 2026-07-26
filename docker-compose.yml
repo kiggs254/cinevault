@@ -83,6 +83,23 @@ services:
     ports:
       - "${PROWLARR_PORT:-9696}:9696"
 
+  # Cloudflare challenge solver. Prowlarr reaches it at http://flaresolverr:8191
+  # — NOT http://localhost:8191 (inside the Prowlarr container "localhost" is
+  # Prowlarr itself, which is why the proxy test returned "Connection refused").
+  # Runs a headless Chrome, so allow ~300-700MB RAM while it solves a challenge.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    # Internal-only: reached as flaresolverr:8191 by Prowlarr on the compose net.
+    # Uncomment to expose on the host for debugging (curl localhost:8191/health):
+    # ports:
+    #   - "8191:8191"
+    expose:
+      - "8191"
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
