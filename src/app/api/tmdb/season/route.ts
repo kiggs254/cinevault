@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 
   const eps = await getSeasonEpisodes(cfg.tmdb.apiKey, id, season);
 
-  // Match downloads for this show + season (owned state + stream/download info).
+  // Per-episode downloads (individual files → individually playable).
   const dls = await prisma.download.findMany({
     where: { tmdbId: id, season, episode: { not: null }, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { id: true, episode: true, s3Key: true, sizeBytes: true, status: true },
@@ -28,9 +28,21 @@ export async function GET(req: Request) {
   const byEp = new Map<number, (typeof dls)[number]>();
   for (const d of dls) if (d.episode != null && !byEp.has(d.episode)) byEp.set(d.episode, d);
 
+  // A whole-season pack (episode = null) covers every aired episode even though
+  // there's no per-episode row. Prefer a completed one for status.
+  const packs = await prisma.download.findMany({
+    where: { tmdbId: id, season, episode: null, status: { notIn: ["FAILED", "CANCELLED"] } },
+    select: { id: true, status: true },
+    orderBy: { createdAt: "desc" },
+  });
+  const pack = packs.find((p) => p.status === "COMPLETED") ?? packs[0] ?? null;
+
   const today = new Date().toISOString().slice(0, 10);
   const episodes = eps.map((e) => {
     const d = byEp.get(e.episodeNumber);
+    const released = !!e.airDate && e.airDate <= today;
+    // Owned if we have this exact episode, or a season pack covers the aired season.
+    const owned = !!d || (!!pack && released);
     return {
       episodeNumber: e.episodeNumber,
       name: e.name ?? null,
@@ -39,11 +51,15 @@ export async function GET(req: Request) {
       airDate: e.airDate ?? null,
       runtime: e.runtime ?? null,
       voteAverage: e.voteAverage ?? null,
-      released: !!e.airDate && e.airDate <= today,
-      owned: !!d,
+      released,
+      owned,
+      // Per-episode file is individually openable; a pack marks the episode owned
+      // (no per-episode key to stream — the pack plays from its own Library card).
       download: d
         ? { id: d.id, s3Key: d.s3Key, sizeBytes: Number(d.sizeBytes), status: d.status }
-        : null,
+        : owned && pack
+          ? { id: pack.id, s3Key: null, sizeBytes: 0, status: pack.status }
+          : null,
     };
   });
 

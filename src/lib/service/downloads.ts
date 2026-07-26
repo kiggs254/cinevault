@@ -419,6 +419,21 @@ export async function grabSeason(opts: {
   }
   if (available.length === 0) return { ...base, reason: "no aired episodes" };
 
+  // Already have a whole-season pack? It covers every episode — don't re-search a
+  // pack or grab episodes individually (guards "Grab missing" from re-downloading).
+  const existingPack = await prisma.download.findFirst({
+    where: {
+      tmdbId: opts.tmdbId,
+      season: opts.season,
+      episode: null,
+      status: { notIn: ["FAILED", "CANCELLED"] },
+    },
+    select: { id: true },
+  });
+  if (existingPack) {
+    return { season: opts.season, mode: "pack", queued: 0, failed: 0, total: available.length, reason: "season pack already present" };
+  }
+
   const lastAired = Math.max(
     ...available.map(airedTs).filter((t) => !Number.isNaN(t)),
     seasonAired ?? -Infinity,
