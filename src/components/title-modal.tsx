@@ -1,8 +1,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Check, Plus, Tv, Film } from "lucide-react";
+import { X, Download, Loader2, Check, Plus, Tv, Film, Star } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
+
+interface CastMember {
+  name: string;
+  character?: string | null;
+  profileUrl?: string | null;
+}
+
+/** "134" → "2h 14m", "45" → "45m". */
+function formatRuntime(min?: number | null): string | undefined {
+  if (!min || min <= 0) return undefined;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+}
+
+/** "1234" → "1.2k", "2500000" → "2.5M". */
+function formatCount(n?: number | null): string | undefined {
+  if (!n || n <= 0) return undefined;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/** "2026-07-26" → "Jul 26, 2026". */
+function formatDate(d?: string | null): string | undefined {
+  if (!d) return undefined;
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return undefined;
+  return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
 
 export interface TitleSeed {
   tmdbId: number;
@@ -29,6 +59,16 @@ interface Details {
   status?: string | null;
   seasons?: Season[];
   ownedMovie?: boolean;
+  voteAverage?: number | null;
+  voteCount?: number | null;
+  runtime?: number | null;
+  genres?: string[] | null;
+  tagline?: string | null;
+  releaseDate?: string | null;
+  numberOfSeasons?: number | null;
+  numberOfEpisodes?: number | null;
+  certification?: string | null;
+  cast?: CastMember[] | null;
 }
 
 export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => void }) {
@@ -123,6 +163,19 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
 
   const backdrop = details?.backdropUrl || seed.posterUrl;
 
+  const isMovie = seed.mediaType === "movie";
+  const rating =
+    typeof details?.voteAverage === "number" && details.voteAverage > 0 ? details.voteAverage : null;
+  const ratingCount = formatCount(details?.voteCount);
+  const runtimeLabel = isMovie
+    ? formatRuntime(details?.runtime)
+    : details?.numberOfSeasons
+      ? `${details.numberOfSeasons} season${details.numberOfSeasons === 1 ? "" : "s"}` +
+        (details?.numberOfEpisodes ? ` · ${details.numberOfEpisodes} eps` : "")
+      : undefined;
+  const dateLabel = formatDate(details?.releaseDate);
+  const showMetaStrip = !!(rating || details?.certification || runtimeLabel || dateLabel);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
       <div
@@ -156,7 +209,50 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
             <p className="flex items-center gap-2 text-sm text-faint"><Loader2 size={15} className="animate-spin" /> Loading…</p>
           ) : (
             <>
+              {showMetaStrip && (
+                <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+                  {rating && (
+                    <span className="inline-flex items-center gap-1 font-semibold text-ink">
+                      <Star size={13} className="fill-accent text-accent" />
+                      {rating.toFixed(1)}
+                      {ratingCount && <span className="font-normal text-faint">({ratingCount})</span>}
+                    </span>
+                  )}
+                  {details?.certification && (
+                    <span className="rounded border border-border px-1.5 py-0.5 font-medium text-muted">
+                      {details.certification}
+                    </span>
+                  )}
+                  {runtimeLabel && <span className="text-muted">{runtimeLabel}</span>}
+                  {dateLabel && <span className="text-muted">{dateLabel}</span>}
+                </div>
+              )}
+
+              {details?.genres && details.genres.length > 0 && (
+                <div className="mb-4 flex flex-wrap gap-1.5">
+                  {details.genres.map((g) => (
+                    <span
+                      key={g}
+                      className="rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] text-muted"
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {details?.tagline && (
+                <p className="mb-3 text-sm italic text-faint">“{details.tagline}”</p>
+              )}
+
               {details?.overview && <p className="mb-5 text-sm text-muted">{details.overview}</p>}
+
+              {details?.cast && details.cast.length > 0 && (
+                <div className="mb-5">
+                  <p className="label mb-1.5">Cast</p>
+                  <p className="text-sm text-muted">{details.cast.map((c) => c.name).join(", ")}</p>
+                </div>
+              )}
 
               {seed.mediaType === "movie" ? (
                 <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy || details?.ownedMovie}>

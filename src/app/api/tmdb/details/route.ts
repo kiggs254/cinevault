@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
-import { getTvDetails, getTitle } from "@/lib/metadata/tmdb";
+import { getTvDetails, getMovieDetails } from "@/lib/metadata/tmdb";
 import { prisma } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -24,7 +24,7 @@ export async function GET(req: Request) {
   const ownedMovie = owned.some((o) => o.kind === "MOVIE");
 
   if (type === "movie") {
-    const d = await getTitle(cfg.tmdb.apiKey, "movie", id);
+    const d = await getMovieDetails(cfg.tmdb.apiKey, id);
     if (!d) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ details: { ...d, ownedMovie } });
   }

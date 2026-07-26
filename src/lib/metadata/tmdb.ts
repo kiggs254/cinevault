@@ -5,6 +5,12 @@ const API = "https://api.themoviedb.org/3";
 
 export type TmdbMediaType = "movie" | "tv";
 
+export interface TmdbCastMember {
+  name: string;
+  character?: string;
+  profileUrl?: string;
+}
+
 export interface TmdbTitle {
   tmdbId: number;
   mediaType: TmdbMediaType;
@@ -16,6 +22,16 @@ export interface TmdbTitle {
   genreIds?: number[];
   voteAverage?: number;
   popularity?: number;
+  // Richer fields — only populated by the single-title detail endpoints below.
+  voteCount?: number;
+  genres?: string[]; // genre names (detail responses carry names, lists carry ids)
+  runtime?: number; // movie minutes, or a TV episode's typical runtime
+  tagline?: string;
+  releaseDate?: string; // full YYYY-MM-DD (movie release / TV first air)
+  numberOfSeasons?: number;
+  numberOfEpisodes?: number;
+  certification?: string; // US age rating, e.g. "PG-13" (movie) / "TV-MA" (tv)
+  cast?: TmdbCastMember[];
 }
 
 export interface TmdbEpisode {
@@ -93,7 +109,51 @@ function toTitle(hit: any, forcedType?: TmdbMediaType): TmdbTitle | null {
     genreIds: Array.isArray(hit.genre_ids) ? hit.genre_ids : undefined,
     voteAverage: typeof hit.vote_average === "number" ? hit.vote_average : undefined,
     popularity: typeof hit.popularity === "number" ? hit.popularity : undefined,
+    voteCount: typeof hit.vote_count === "number" ? hit.vote_count : undefined,
+    genres: Array.isArray(hit.genres)
+      ? hit.genres.map((g: any) => g?.name).filter((n: unknown): n is string => typeof n === "string")
+      : undefined,
+    runtime:
+      typeof hit.runtime === "number"
+        ? hit.runtime
+        : Array.isArray(hit.episode_run_time) && typeof hit.episode_run_time[0] === "number"
+          ? hit.episode_run_time[0]
+          : undefined,
+    tagline: typeof hit.tagline === "string" && hit.tagline ? hit.tagline : undefined,
+    releaseDate: hit.release_date || hit.first_air_date || undefined,
+    numberOfSeasons: typeof hit.number_of_seasons === "number" ? hit.number_of_seasons : undefined,
+    numberOfEpisodes: typeof hit.number_of_episodes === "number" ? hit.number_of_episodes : undefined,
   };
+}
+
+/** Top-billed cast from an appended `credits` response (best-effort). */
+function parseCast(hit: any, limit = 8): TmdbCastMember[] {
+  const cast = hit?.credits?.cast;
+  if (!Array.isArray(cast)) return [];
+  return cast
+    .slice(0, limit)
+    .map((c: any) => ({
+      name: c?.name,
+      character: c?.character || undefined,
+      profileUrl: c?.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : undefined,
+    }))
+    .filter((c: TmdbCastMember) => !!c.name);
+}
+
+/** US certification from a movie's appended `release_dates`, or a TV `content_ratings`. */
+function parseCertification(hit: any): string | undefined {
+  const movie = hit?.release_dates?.results;
+  if (Array.isArray(movie)) {
+    const us = movie.find((r: any) => r?.iso_3166_1 === "US");
+    const cert = us?.release_dates?.find((d: any) => d?.certification)?.certification;
+    if (cert) return cert;
+  }
+  const tv = hit?.content_ratings?.results;
+  if (Array.isArray(tv)) {
+    const us = tv.find((r: any) => r?.iso_3166_1 === "US");
+    if (us?.rating) return us.rating;
+  }
+  return undefined;
 }
 
 function toTitles(res: { results?: any[] } | null, forcedType?: TmdbMediaType): TmdbTitle[] {
@@ -258,9 +318,25 @@ export async function getTitle(
   return hit ? toTitle(hit, type) : null;
 }
 
+/**
+ * Full movie details for the title modal: base fields (rating, runtime, genres,
+ * tagline) plus top-billed cast and the US age certification.
+ */
+export async function getMovieDetails(apiKey: string, id: number): Promise<TmdbTitle | null> {
+  const hit = await tmdbFetch<Record<string, unknown>>(apiKey, `/movie/${id}`, {
+    append_to_response: "credits,release_dates",
+  });
+  if (!hit) return null;
+  const base = toTitle(hit, "movie");
+  if (!base) return null;
+  return { ...base, cast: parseCast(hit), certification: parseCertification(hit) };
+}
+
 /** TV details incl. seasons, status, networks — used by the follow scanner. */
 export async function getTvDetails(apiKey: string, id: number): Promise<TmdbTvDetails | null> {
-  const d = await tmdbFetch<Record<string, unknown>>(apiKey, `/tv/${id}`);
+  const d = await tmdbFetch<Record<string, unknown>>(apiKey, `/tv/${id}`, {
+    append_to_response: "credits,content_ratings",
+  });
   if (!d) return null;
   const base = toTitle(d, "tv");
   if (!base) return null;
@@ -277,7 +353,16 @@ export async function getTvDetails(apiKey: string, id: number): Promise<TmdbTvDe
   const networks = ((d.networks as any[]) ?? []).map((n) => n.name as string);
   const backdropUrl = d.backdrop_path ? `https://image.tmdb.org/t/p/w1280${d.backdrop_path}` : undefined;
   /* eslint-enable @typescript-eslint/no-explicit-any */
-  return { ...base, status: d.status as string | undefined, seasons, genres, networks, backdropUrl };
+  return {
+    ...base,
+    status: d.status as string | undefined,
+    seasons,
+    genres,
+    networks,
+    backdropUrl,
+    cast: parseCast(d),
+    certification: parseCertification(d),
+  };
 }
 
 /** Episodes (with air dates) for one season. */
