@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   RotateCw,
   Trash2,
@@ -11,6 +11,7 @@ import {
   Clock,
   Shuffle,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/util";
 import { jsonFetch } from "@/lib/client";
@@ -18,6 +19,30 @@ import { useConfirm } from "@/components/confirm-dialog";
 import { OptionsList, type ChatOption } from "./options-list";
 import type { SearchResult } from "./result-card";
 import type { DownloadDTO, DownloadStatus } from "@/lib/types";
+
+function fmtDateTime(iso: string): string {
+  const dt = new Date(iso);
+  return Number.isNaN(dt.getTime())
+    ? iso
+    : dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function kindLabel(d: DownloadDTO): string {
+  let s = String(d.kind);
+  if (d.season != null) s += ` · Season ${d.season}`;
+  if (d.episode != null) s += ` · Episode ${d.episode}`;
+  return s;
+}
+
+/** One label/value row in the expanded detail grid. */
+function Detail({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-0.5">
+      <span className="flex-none text-faint">{label}</span>
+      <span className="min-w-0 break-all text-right text-ink">{value}</span>
+    </div>
+  );
+}
 
 function meta(s: DownloadStatus): { label: string; color: string } {
   switch (s) {
@@ -60,6 +85,7 @@ export function DownloadRow({
   const active = isActive(d.status);
   const uploading = d.status === "UPLOADING";
 
+  const [expanded, setExpanded] = useState(false);
   const [alts, setAlts] = useState<SearchResult[] | null>(null);
   const [loadingAlts, setLoadingAlts] = useState(false);
   const [pickId, setPickId] = useState<string | null>(null);
@@ -141,76 +167,88 @@ export function DownloadRow({
   return (
     <div className="card rise p-4">
       <div className="flex gap-4">
-        <div className="relative h-20 w-14 flex-none overflow-hidden rounded-md bg-surface-2">
-          {d.posterUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={d.posterUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <span className="flex h-full w-full items-center justify-center text-faint">
-              <Film size={20} />
-            </span>
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-ink" title={d.title}>
-                {d.title}
-                {d.year ? ` (${d.year})` : ""}
-              </p>
-              <p className="truncate text-xs text-faint" title={d.releaseName}>
-                {d.releaseName}
-              </p>
-            </div>
-            <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
-              {active && <span className="dot dot-live" style={{ background: m.color, color: m.color }} />}
-              {m.label}
-            </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-start gap-4 text-left"
+        >
+          <div className="relative h-20 w-14 flex-none overflow-hidden rounded-md bg-surface-2">
+            {d.posterUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={d.posterUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-faint">
+                <Film size={20} />
+              </span>
+            )}
           </div>
 
-          {active && (
-            <div className="mt-3">
-              <div className="track">
-                <div
-                  className={`track-fill ${active ? "active" : ""}`}
-                  style={{ width: `${Math.max(2, d.progress)}%` }}
-                />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`text-sm font-medium text-ink ${expanded ? "" : "truncate"}`} title={d.title}>
+                  {d.title}
+                  {d.year ? ` (${d.year})` : ""}
+                </p>
+                <p className={`text-xs text-faint ${expanded ? "break-all" : "truncate"}`} title={d.releaseName}>
+                  {d.releaseName}
+                </p>
               </div>
-              <div className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.7rem] text-muted">
-                <span>{d.progress.toFixed(1)}%</span>
-                {uploading ? (
-                  <span className="flex items-center gap-1">
-                    <UploadCloud size={12} /> to S3
-                  </span>
-                ) : (
-                  <>
-                    <span className="flex items-center gap-1">
-                      <DownIcon size={12} /> {formatSpeed(d.dlSpeed)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users size={12} /> {d.seeders ?? 0}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock size={12} /> {formatEta(d.etaSeconds)}
-                    </span>
-                  </>
-                )}
-              </div>
+              <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
+                {active && <span className="dot dot-live" style={{ background: m.color, color: m.color }} />}
+                {m.label}
+              </span>
             </div>
-          )}
 
-          {d.status === "COMPLETED" && (
-            <p className="mono mt-2 truncate text-xs text-muted">
-              {formatBytes(d.sizeBytes)}
-              {d.s3Key ? ` · ${d.s3Key.split("/").slice(0, -1).join("/")}` : ""}
-            </p>
-          )}
-          {d.status === "FAILED" && d.error && (
-            <p className="mt-2 text-xs text-danger">{d.error}</p>
-          )}
-          {err && <p className="mt-2 text-xs text-danger">{err}</p>}
-        </div>
+            {active && (
+              <div className="mt-3">
+                <div className="track">
+                  <div
+                    className={`track-fill ${active ? "active" : ""}`}
+                    style={{ width: `${Math.max(2, d.progress)}%` }}
+                  />
+                </div>
+                <div className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.7rem] text-muted">
+                  <span>{d.progress.toFixed(1)}%</span>
+                  {uploading ? (
+                    <span className="flex items-center gap-1">
+                      <UploadCloud size={12} /> to S3
+                    </span>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <DownIcon size={12} /> {formatSpeed(d.dlSpeed)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users size={12} /> {d.seeders ?? 0}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock size={12} /> {formatEta(d.etaSeconds)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {d.status === "COMPLETED" && (
+              <p className={`mono mt-2 text-xs text-muted ${expanded ? "break-all" : "truncate"}`}>
+                {formatBytes(d.sizeBytes)}
+                {d.s3Key ? ` · ${d.s3Key.split("/").slice(0, -1).join("/")}` : ""}
+              </p>
+            )}
+            {d.status === "FAILED" && d.error && !expanded && (
+              <p className="mt-2 truncate text-xs text-danger">{d.error}</p>
+            )}
+            {err && <p className="mt-2 text-xs text-danger">{err}</p>}
+          </div>
+
+          <ChevronDown
+            size={16}
+            className={`mt-1 flex-none text-muted transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        </button>
 
         <div className="flex flex-none flex-col gap-1.5">
           {(d.status === "FAILED" || d.status === "CANCELLED") && (
@@ -246,6 +284,33 @@ export function DownloadRow({
           </button>
         </div>
       </div>
+
+      {expanded && (
+        <div className="mt-3 space-y-0.5 border-t border-border pt-3 text-xs">
+          <Detail label="Status" value={m.label} />
+          <Detail label="Type" value={kindLabel(d)} />
+          <Detail label="Size" value={formatBytes(d.sizeBytes)} />
+          {active && (
+            <Detail
+              label="Progress"
+              value={`${d.progress.toFixed(1)}% · ${formatBytes(d.downloadedBytes)} / ${formatBytes(d.sizeBytes)}`}
+            />
+          )}
+          {active && !uploading && (
+            <>
+              <Detail label="Speed" value={formatSpeed(d.dlSpeed)} />
+              <Detail label="ETA" value={formatEta(d.etaSeconds)} />
+            </>
+          )}
+          {d.seeders != null && <Detail label="Seeders" value={String(d.seeders)} />}
+          {d.indexer && <Detail label="Indexer" value={d.indexer} />}
+          <Detail label="Release" value={d.releaseName} />
+          {d.s3Key && <Detail label="Path" value={d.s3Key} />}
+          <Detail label="Started" value={fmtDateTime(d.createdAt)} />
+          {d.completedAt && <Detail label="Completed" value={fmtDateTime(d.completedAt)} />}
+          {d.error && <Detail label="Error" value={<span className="text-danger">{d.error}</span>} />}
+        </div>
+      )}
 
       {alts && alts.length > 0 && (
         <div className="mt-3">
