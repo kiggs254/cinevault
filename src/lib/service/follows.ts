@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
-import { rankResults } from "../scoring/scorer";
+import { pickAutoRelease } from "../scoring/scorer";
 import { createDownload } from "./downloads";
 import { notify } from "../telegram/client";
 import {
@@ -95,13 +95,8 @@ async function grabEpisode(
     limit: 40,
     indexerIds: cfg.profile.legalIndexerIds,
   });
-  const ranked = rankResults(results, {
-    preferredQuality: show.quality && show.quality !== "any" ? show.quality : cfg.prefs.preferredQuality,
-    minSeeders: cfg.prefs.minSeeders,
-    maxSizeGB: cfg.prefs.maxSizeGB,
-    kind: "TV",
-  });
-  const best = ranked.find((r) => r.score > 0 && (r.magnetUrl || r.downloadUrl));
+  // 720p, smallest well-seeded episode.
+  const best = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
   if (!best) return false;
   await createDownload({
     releaseName: best.title,

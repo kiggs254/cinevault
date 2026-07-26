@@ -1,10 +1,9 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { planQuery } from "../llm/search-planner";
-import { aiRank } from "../llm/ranker";
 import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
-import { rankResults } from "../scoring/scorer";
+import { rankResults, pickAutoRelease } from "../scoring/scorer";
 import { enqueueDownload } from "../queue";
 import { publishProgress } from "../events";
 import { toDTO } from "../serialize";
@@ -41,31 +40,26 @@ export async function planAndSearch(
   return { plan, ranked };
 }
 
-/** Ask the AI to pick the best candidate; fall back to the top scored result. */
+/**
+ * Pick the release to auto-download: 720p, then the smallest well-seeded file.
+ * Shared by the agent, the direct/season download buttons, and auto-grab.
+ */
 export async function chooseBest(
-  plan: PlannedQuery,
+  _plan: PlannedQuery,
   ranked: ScoredResult[],
 ): Promise<{ chosen: ScoredResult | null; decision: RankDecision }> {
   if (ranked.length === 0) {
+    return { chosen: null, decision: { chosenIndex: -1, reason: "No results found", flaggedIndexes: [] } };
+  }
+  const cfg = await getConfig();
+  const chosen = pickAutoRelease(ranked, { minSeeders: cfg.prefs.minSeeders });
+  if (!chosen) {
     return {
       chosen: null,
-      decision: { chosenIndex: -1, reason: "No results found", flaggedIndexes: [] },
+      decision: { chosenIndex: -1, reason: "No acceptable release (needs seeders, non-CAM)", flaggedIndexes: [] },
     };
   }
-  const top = ranked.slice(0, 8);
-  let decision: RankDecision;
-  try {
-    decision = await aiRank(plan, top);
-  } catch {
-    decision = {
-      chosenIndex: 0,
-      reason: "Top-scored result (AI ranking unavailable)",
-      flaggedIndexes: [],
-    };
-  }
-  const idx = decision.chosenIndex;
-  const chosen = idx >= 0 && idx < top.length ? top[idx] : ranked[0] ?? null;
-  return { chosen, decision };
+  return { chosen, decision: { chosenIndex: 0, reason: "720p, smallest well-seeded release", flaggedIndexes: [] } };
 }
 
 export interface CreateDownloadInput {
@@ -152,6 +146,69 @@ export async function startFromQuery(nl: string): Promise<{
   if (!input.source) return { plan, ranked, decision };
   const download = await createDownload(input);
   return { plan, ranked, decision, download };
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Direct-download a movie by TMDB title (720p / smallest well-seeded). */
+export async function grabMovie(opts: {
+  tmdbId: number;
+  title: string;
+  year?: number | null;
+}): Promise<DownloadDTO | null> {
+  const cfg = await getConfig();
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const q = `${opts.title}${opts.year ? ` ${opts.year}` : ""}`;
+  const results = await prowlarr.search(q, { categories: categoriesForKind("MOVIE"), limit: 60 });
+  const chosen = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.2 });
+  if (!chosen) return null;
+  return createDownload({
+    releaseName: chosen.title,
+    source: chosen.magnetUrl ?? chosen.downloadUrl ?? "",
+    infoHash: chosen.infoHash,
+    indexer: chosen.indexer,
+    size: chosen.size,
+    seeders: chosen.seeders,
+    kind: "MOVIE",
+    title: opts.title,
+    year: opts.year ?? null,
+    tmdbId: opts.tmdbId,
+    query: q,
+  });
+}
+
+/** Direct-download a full season as a pack, searched as "Title Season N". */
+export async function grabSeason(opts: {
+  tmdbId: number;
+  title: string;
+  season: number;
+  year?: number | null;
+}): Promise<DownloadDTO | null> {
+  const cfg = await getConfig();
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const cats = categoriesForKind("TV");
+  const queries = [`${opts.title} Season ${opts.season}`, `${opts.title} S${pad2(opts.season)}`];
+  for (const q of queries) {
+    const results = await prowlarr.search(q, { categories: cats, limit: 60 });
+    const chosen = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.3 });
+    if (chosen) {
+      return createDownload({
+        releaseName: chosen.title,
+        source: chosen.magnetUrl ?? chosen.downloadUrl ?? "",
+        infoHash: chosen.infoHash,
+        indexer: chosen.indexer,
+        size: chosen.size,
+        seeders: chosen.seeders,
+        kind: "TV",
+        title: opts.title,
+        year: opts.year ?? null,
+        season: opts.season,
+        tmdbId: opts.tmdbId,
+        query: q,
+      });
+    }
+  }
+  return null;
 }
 
 export async function listDownloads(): Promise<DownloadDTO[]> {

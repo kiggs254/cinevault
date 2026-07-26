@@ -134,3 +134,42 @@ export function scoreResult(r: TorrentResult, prefs: ScorePrefs): ScoredResult {
 export function rankResults(results: TorrentResult[], prefs: ScorePrefs): ScoredResult[] {
   return results.map((r) => scoreResult(r, prefs)).sort((a, b) => b.score - a.score);
 }
+
+/**
+ * Auto-pick for unattended/agent downloads: prefer 720p, then the SMALLEST file
+ * among the well-seeded tier. Rejects CAMs and absurdly tiny (fake) releases.
+ * This is the "720p, smallest file with the most seeders" policy.
+ */
+export function pickAutoRelease(
+  results: TorrentResult[],
+  opts: { minSeeders?: number; floorGB?: number } = {},
+): ScoredResult | null {
+  const minSeeders = Math.max(1, opts.minSeeders ?? 1);
+  const floor = (opts.floorGB ?? 0.05) * GB; // reject fake tiny files
+  const parsed = results.map((r) => ({ r, p: parseRelease(r.title) }));
+  const usable = parsed.filter(
+    (x) =>
+      !x.p.isCam &&
+      x.r.size >= floor &&
+      (x.r.seeders ?? 0) >= minSeeders &&
+      (x.r.magnetUrl || x.r.downloadUrl),
+  );
+  if (usable.length === 0) return null;
+
+  // Prefer 720p; fall back to any usable resolution if there are none.
+  const at720 = usable.filter((x) => x.p.resolution === "720p");
+  const pool = at720.length ? at720 : usable;
+
+  // Keep the well-seeded tier (within 40% of the best), then take the smallest.
+  const maxSeed = Math.max(...pool.map((x) => x.r.seeders ?? 0));
+  const healthy = pool.filter((x) => (x.r.seeders ?? 0) >= Math.max(minSeeders, maxSeed * 0.4));
+  healthy.sort((a, b) => a.r.size - b.r.size);
+  const chosen = (healthy[0] ?? pool[0]).r;
+
+  return scoreResult(chosen, {
+    preferredQuality: "720p",
+    minSeeders,
+    maxSizeGB: Number.MAX_SAFE_INTEGER,
+    kind: "OTHER",
+  });
+}

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { providerFor, safeChatCreate } from "./providers";
 import { planAndSearch, startFromQuery } from "../service/downloads";
+import { pickAutoRelease } from "../scoring/scorer";
 
 export interface AgentMessage {
   role: "user" | "assistant";
@@ -79,7 +80,14 @@ async function execTool(
     emit({ type: "status", message: `Searching for “${query}”…` });
     try {
       const { plan, ranked } = await planAndSearch(query);
-      const top = ranked.slice(0, 6);
+      // Surface the auto-pick (720p, smallest well-seeded) first as the recommended option.
+      const auto = pickAutoRelease(ranked);
+      let top = ranked.slice(0, 6);
+      if (auto) {
+        const idx = top.findIndex((r) => r.title === auto.title);
+        if (idx > 0) top.unshift(top.splice(idx, 1)[0]);
+        else if (idx === -1) top = [auto, ...ranked.filter((r) => r.title !== auto.title)].slice(0, 6);
+      }
       emit({
         type: "options",
         title: `Results for ${plan.title}${plan.year ? ` (${plan.year})` : ""}`,

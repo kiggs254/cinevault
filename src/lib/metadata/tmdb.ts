@@ -12,6 +12,7 @@ export interface TmdbTitle {
   year?: number;
   overview?: string;
   posterUrl?: string;
+  backdropUrl?: string;
   genreIds?: number[];
   voteAverage?: number;
   popularity?: number;
@@ -24,11 +25,18 @@ export interface TmdbEpisode {
   airDate?: string; // YYYY-MM-DD
 }
 
+export interface TmdbSeason {
+  seasonNumber: number;
+  episodeCount: number;
+  airDate?: string;
+  name?: string;
+}
 export interface TmdbTvDetails extends TmdbTitle {
   status?: string; // "Returning Series" | "Ended" | "Canceled" | ...
-  seasons: { seasonNumber: number; episodeCount: number }[];
+  seasons: TmdbSeason[];
   genres: string[];
   networks: string[];
+  backdropUrl?: string;
 }
 
 export interface TmdbMeta {
@@ -81,6 +89,7 @@ function toTitle(hit: any, forcedType?: TmdbMediaType): TmdbTitle | null {
     year: yearOf(hit.release_date ?? hit.first_air_date),
     overview: hit.overview || undefined,
     posterUrl: posterFrom(hit.poster_path),
+    backdropUrl: hit.backdrop_path ? `https://image.tmdb.org/t/p/w1280${hit.backdrop_path}` : undefined,
     genreIds: Array.isArray(hit.genre_ids) ? hit.genre_ids : undefined,
     voteAverage: typeof hit.vote_average === "number" ? hit.vote_average : undefined,
     popularity: typeof hit.popularity === "number" ? hit.popularity : undefined,
@@ -161,6 +170,16 @@ export async function getTrending(
   return toTitles(await tmdbFetch(apiKey, `/trending/${type}/week`));
 }
 
+/** Popular titles (for the Netflix-style browse rows). */
+export async function getPopular(apiKey: string, type: TmdbMediaType): Promise<TmdbTitle[]> {
+  return toTitles(await tmdbFetch(apiKey, `/${type}/popular`), type);
+}
+
+/** Top-rated titles. */
+export async function getTopRated(apiKey: string, type: TmdbMediaType): Promise<TmdbTitle[]> {
+  return toTitles(await tmdbFetch(apiKey, `/${type}/top_rated`), type);
+}
+
 export async function discoverByGenres(
   apiKey: string,
   type: TmdbMediaType,
@@ -206,13 +225,19 @@ export async function getTvDetails(apiKey: string, id: number): Promise<TmdbTvDe
   const base = toTitle(d, "tv");
   if (!base) return null;
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  const seasons = ((d.seasons as any[]) ?? [])
+  const seasons: TmdbSeason[] = ((d.seasons as any[]) ?? [])
     .filter((s) => (s.season_number ?? 0) > 0)
-    .map((s) => ({ seasonNumber: s.season_number as number, episodeCount: (s.episode_count as number) ?? 0 }));
+    .map((s) => ({
+      seasonNumber: s.season_number as number,
+      episodeCount: (s.episode_count as number) ?? 0,
+      airDate: (s.air_date as string) || undefined,
+      name: (s.name as string) || undefined,
+    }));
   const genres = ((d.genres as any[]) ?? []).map((g) => g.name as string);
   const networks = ((d.networks as any[]) ?? []).map((n) => n.name as string);
+  const backdropUrl = d.backdrop_path ? `https://image.tmdb.org/t/p/w1280${d.backdrop_path}` : undefined;
   /* eslint-enable @typescript-eslint/no-explicit-any */
-  return { ...base, status: d.status as string | undefined, seasons, genres, networks };
+  return { ...base, status: d.status as string | undefined, seasons, genres, networks, backdropUrl };
 }
 
 /** Episodes (with air dates) for one season. */
