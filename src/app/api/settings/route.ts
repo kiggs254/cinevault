@@ -91,7 +91,7 @@ export async function POST(req: Request) {
         const me = await tgApi<{ username?: string }>(cfg.telegram.botToken, "getMe");
         if (!me) throw new Error("Invalid bot token");
         if (cfg.telegram.chatId) {
-          await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, "✅ MovieHub is connected to this chat.");
+          await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, "✅ Cinevault is connected to this chat.");
         }
         return NextResponse.json({
           ok: true,

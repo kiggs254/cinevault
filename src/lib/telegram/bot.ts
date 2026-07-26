@@ -96,7 +96,7 @@ async function handle(u: TgUpdate): Promise<void> {
     await sendMessage(
       token,
       chatId,
-      "🎬 MovieHub agent. Ask me to find or download things (“download Dune Part Two 4k”), and I'll notify you about new episodes of shows you follow and completed downloads. When I list options, reply with a number to grab one.",
+      "🎬 Cinevault agent. Ask me to find or download things (“download Dune Part Two 4k”), and I'll notify you about new episodes of shows you follow and completed downloads. When I list options, reply with a number to grab one.",
     );
     return;
   }

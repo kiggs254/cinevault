@@ -15,8 +15,8 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MOVIE HUB — AI Media Deck",
-  description: "A self-hosted, AI-driven media downloader with S3 archiving.",
+  title: "Cinevault — AI film & TV vault",
+  description: "A self-hosted, AI-curated film & TV vault with S3 archiving.",
 };
 
 export const viewport: Viewport = {

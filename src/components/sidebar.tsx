@@ -70,10 +70,10 @@ function Wordmark() {
   return (
     <Link href="/" className="flex items-baseline gap-1 leading-none">
       <span className="text-3xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
-        MOVIE
+        CINE
       </span>
       <span className="text-3xl text-accent" style={{ fontFamily: "var(--font-display)" }}>
-        HUB
+        VAULT
       </span>
     </Link>
   );
