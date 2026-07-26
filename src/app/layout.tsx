@@ -23,13 +23,25 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover", // extend under the notch/home-indicator for safe-area insets
-  themeColor: "#0b0b0d",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f2ea" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0b0d" },
+  ],
 };
+
+// Runs before paint: applies the saved (or system) theme so there's no flash.
+const THEME_INIT = `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${bebas.variable} ${hanken.variable} ${jetbrains.variable}`}>
+    <html
+      lang="en"
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${bebas.variable} ${hanken.variable} ${jetbrains.variable}`}
+    >
       <body>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         <div className="glow" aria-hidden="true" />
         <div className="grain" aria-hidden="true" />
         <div className="relative z-[2]">{children}</div>

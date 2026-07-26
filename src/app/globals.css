@@ -24,6 +24,32 @@
   --radius: 0.85rem;
 }
 
+/* --- Light theme: data-theme="light" swaps the tokens. Unlayered so it always
+   wins over the @theme defaults, regardless of layer ordering. ------------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f5f2ea;
+  --color-surface: #ffffff;
+  --color-surface-2: #efeadf;
+  --color-elevated: #e7e1d3;
+  --color-border: rgba(30, 26, 18, 0.12);
+  --color-border-strong: rgba(30, 26, 18, 0.2);
+  --color-ink: #211d15;
+  --color-muted: #6c6455;
+  --color-faint: #9c9483;
+  --color-accent: #b7791b;
+  --color-accent-bright: #a06713;
+  --color-accent-soft: rgba(183, 121, 27, 0.14);
+  --color-success: #3f9e57;
+  --color-danger: #c9483d;
+  --color-info: #3d7cbf;
+}
+/* The film-grain overlay is tuned for dark; soften it on light. */
+:root[data-theme="light"] .grain {
+  opacity: 0.1;
+  mix-blend-mode: multiply;
+}
+
 @layer base {
   :root {
     color-scheme: dark;
@@ -39,7 +65,7 @@
     background: var(--color-bg);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    min-height: 100vh;
+    min-height: 100dvh;
     overflow-x: hidden;
   }
   ::selection {

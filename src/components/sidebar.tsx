@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut } from "lucide-react";
+import { Home, Library, Download, Compass, Sparkles, Settings2, LogOut, Clapperboard } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { useDownloadsCtx } from "@/components/downloads-context";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV = [
   { href: "/", label: "Home", icon: Home },
@@ -68,12 +69,17 @@ function useSystems() {
 
 function Wordmark() {
   return (
-    <Link href="/" className="flex items-baseline gap-1 leading-none">
-      <span className="text-3xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
-        CINE
+    <Link href="/" className="flex items-center gap-2 leading-none">
+      <span className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-lg border border-border bg-surface-2 text-accent">
+        <Clapperboard size={18} />
       </span>
-      <span className="text-3xl text-accent" style={{ fontFamily: "var(--font-display)" }}>
-        VAULT
+      <span className="flex items-baseline gap-1">
+        <span className="text-3xl text-ink" style={{ fontFamily: "var(--font-display)" }}>
+          CINE
+        </span>
+        <span className="text-3xl text-accent" style={{ fontFamily: "var(--font-display)" }}>
+          VAULT
+        </span>
       </span>
     </Link>
   );
@@ -138,9 +144,12 @@ export function Sidebar() {
             ))}
           </div>
         </div>
-        <button onClick={logout} className="btn btn-ghost w-full text-muted">
-          <LogOut size={16} /> Sign out
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={logout} className="btn btn-ghost flex-1 text-muted">
+            <LogOut size={16} /> Sign out
+          </button>
+          <ThemeToggle size={16} className="btn btn-ghost flex-none px-3 text-muted" />
+        </div>
       </div>
     </aside>
   );
@@ -154,6 +163,7 @@ export function MobileTopBar() {
     <header className="flex flex-none items-center justify-between border-b border-border bg-bg/80 px-4 pb-2.5 pt-[calc(0.625rem+env(safe-area-inset-top))] backdrop-blur md:hidden">
       <Wordmark />
       <div className="flex items-center gap-1">
+        <ThemeToggle size={20} className="rounded-lg p-2 text-muted" />
         <Link
           href="/settings"
           aria-label="Settings"

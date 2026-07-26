@@ -83,9 +83,6 @@ export default function LoginPage() {
             </>
           )}
         </button>
-        <p className="mt-6 text-center text-xs text-faint">
-          Single-admin access · set <span className="mono">AUTH_PASSWORD</span> in your environment
-        </p>
       </form>
     </main>
   );
