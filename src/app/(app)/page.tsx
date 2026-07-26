@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search as SearchIcon, Loader2, ChevronRight } from "lucide-react";
+import { Search as SearchIcon, Loader2, ChevronRight, ArrowLeft } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
 import { HeroSlider, type HeroItem } from "@/components/hero-slider";
@@ -42,22 +42,34 @@ function SearchBar({
   q,
   searching,
   onChange,
+  translucent,
 }: {
   q: string;
   searching: boolean;
   onChange: (v: string) => void;
+  translucent?: boolean;
 }) {
   return (
     <div className="relative">
-      <SearchIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+      <SearchIcon
+        size={16}
+        className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 ${translucent ? "text-white/70" : "text-faint"}`}
+      />
       <input
-        className="input pl-9"
+        className={
+          translucent
+            ? "w-full rounded-xl border border-white/20 bg-black/25 py-2.5 pl-9 pr-9 text-sm text-ink outline-none backdrop-blur-md transition placeholder:text-white/60 focus:border-accent focus:bg-black/40"
+            : "input pl-9"
+        }
         placeholder="Search movies & shows to download…"
         value={q}
         onChange={(e) => onChange(e.target.value)}
       />
       {searching && (
-        <Loader2 size={15} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-faint" />
+        <Loader2
+          size={15}
+          className={`absolute right-3 top-1/2 -translate-y-1/2 animate-spin ${translucent ? "text-white/70" : "text-faint"}`}
+        />
       )}
     </div>
   );
@@ -106,6 +118,11 @@ export default function HomePage() {
     }
   }
 
+  function clearSearch() {
+    setQ("");
+    setResults(null);
+  }
+
   const open = (i: TmdbItem) =>
     setSeed({
       tmdbId: i.tmdbId,
@@ -119,21 +136,33 @@ export default function HomePage() {
 
   return (
     <div className="min-h-full">
-      {/* Hero slider with the search bar floated up over the top */}
+      {/* Hero slider with a translucent search tucked into the top-right corner */}
       {showHero && (
         <div className="relative">
           <HeroSlider items={heroItems} onOpen={open} />
-          <div className="absolute left-1/2 top-4 z-20 w-[92%] max-w-2xl -translate-x-1/2 md:top-6">
-            <SearchBar q={q} searching={searching} onChange={search} />
+          <div className="absolute right-4 top-4 z-20 w-72 max-w-[calc(100vw-2rem)] md:right-8 md:top-6">
+            <SearchBar q={q} searching={searching} onChange={search} translucent />
           </div>
         </div>
       )}
 
       <div className="mx-auto max-w-6xl px-5 py-6 md:px-10">
-        {/* Search bar at the top when there is no hero (no TMDB key, or while searching) */}
+        {/* Search bar at the top when there is no hero (no TMDB key, or while searching).
+            Once a search is active, a Back button returns to the hero + browse rows. */}
         {!showHero && (
-          <div className="mb-8 max-w-2xl">
-            <SearchBar q={q} searching={searching} onChange={search} />
+          <div className="mb-8 flex items-center gap-3">
+            {results && (
+              <button
+                className="btn btn-ghost flex-none px-3 py-2"
+                onClick={clearSearch}
+                title="Back to home"
+              >
+                <ArrowLeft size={16} /> Back
+              </button>
+            )}
+            <div className="max-w-2xl flex-1">
+              <SearchBar q={q} searching={searching} onChange={search} />
+            </div>
           </div>
         )}
 
