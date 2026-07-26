@@ -23,6 +23,14 @@ const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
 const STALL_MS = 30 * 60 * 1000;
 
+// How many jobs the worker runs at once. Each active download holds a slot for
+// its whole download + S3 upload, so this also bounds simultaneous uploads.
+// Maintenance scans share this pool, hence the default sits above the usual
+// target of 4 concurrent downloads. Tune with the DOWNLOAD_CONCURRENCY env var.
+// NOTE: qBittorrent's own "Maximum active downloads" must be >= this value, or
+// it will queue torrents past its limit even though the worker started them.
+const DOWNLOAD_CONCURRENCY = Math.max(1, Math.floor(Number(process.env.DOWNLOAD_CONCURRENCY)) || 6);
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const UP_STATES = new Set([
@@ -271,7 +279,7 @@ const worker = new Worker<DownloadJobData>(
       // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
     }
   },
-  { connection: createRedis(), concurrency: 3 },
+  { connection: createRedis(), concurrency: DOWNLOAD_CONCURRENCY },
 );
 
 /**
@@ -295,7 +303,7 @@ async function recoverInterrupted(): Promise<void> {
 }
 
 worker.on("ready", () => {
-  console.log("[worker] ready, waiting for jobs");
+  console.log(`[worker] ready, waiting for jobs (concurrency=${DOWNLOAD_CONCURRENCY})`);
   void recoverInterrupted();
   void schedulePeriodicJobs()
     .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))

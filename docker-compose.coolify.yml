@@ -54,6 +54,7 @@ services:
       QBITTORRENT_URL: http://qbittorrent:8080
       PROWLARR_URL: http://prowlarr:9696
       DOWNLOAD_DIR: /data/downloads
+      DOWNLOAD_CONCURRENCY: ${DOWNLOAD_CONCURRENCY:-6}
     volumes:
       - downloads:/data/downloads
     depends_on:
