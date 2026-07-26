@@ -271,7 +271,7 @@ export default function DownloadsPage() {
           {filter === "all" ? "No downloads yet. Search on Home to start one." : "Nothing here."}
         </p>
       ) : (
-        <div className="grid gap-3">
+        <div className="flex flex-col gap-3">
           {pageUnits.map((u) =>
             u.type === "group" ? (
               <GroupCard

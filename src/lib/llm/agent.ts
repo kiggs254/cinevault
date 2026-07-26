@@ -2,6 +2,9 @@ import OpenAI from "openai";
 import { providerFor, safeChatCreate } from "./providers";
 import { planAndSearch, startFromQuery } from "../service/downloads";
 import { pickAutoRelease } from "../scoring/scorer";
+import { getConfig } from "../config";
+import { searchTitle, getTvDetails } from "../metadata/tmdb";
+import { enqueueSeasonGrab } from "../queue";
 
 export interface AgentMessage {
   role: "user" | "assistant";
@@ -61,12 +64,33 @@ const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "download_season",
+      description:
+        "Download TV the smart way — a whole season, or an entire show. Grabs a validated complete-season pack when one exists, otherwise every AIRED episode one-by-one (correctly matched by SxxExx) into a single folder. Use for requests like 'Rick and Morty season 1', 'download Silo season 2', or 'grab all of The Office'.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "The show title, e.g. 'Rick and Morty'" },
+          season: {
+            type: "integer",
+            description: "Season number for one season. Omit to grab EVERY season of the show.",
+          },
+          year: { type: "integer", description: "The show's first-air year, if known." },
+        },
+        required: ["title"],
+      },
+    },
+  },
 ];
 
 const SYSTEM = `You are the assistant for a self-hosted, AI-driven media downloader that saves finished downloads to the user's S3 storage.
 
-- For most "find / download X" requests, call search_media — the app then shows the user a selectable list of results they tap to download. Afterwards, briefly point them to the list and name the top pick. Do NOT paste the whole list yourself; it is already shown as tappable options.
-- Use queue_download only when the user explicitly says to just grab the best automatically, or for batch requests ("all of Show season 2 in 1080p") — call it once per episode/target.
+- TV **seasons** or a whole **show** ("Rick and Morty season 1", "download Silo season 2", "grab all of The Office"): call download_season. It grabs a validated complete-season pack when available, otherwise every aired episode one-by-one into a single folder. Pass a season number for one season, or omit it to grab the whole show. Do NOT use search_media for a whole season — it lists single releases and can mispick the wrong episode.
+- Movies or a single specific release the user wants to pick from: call search_media — the app shows a selectable list they tap to download. Afterwards, briefly point them to the list and name the top pick. Do NOT paste the whole list yourself; it is already shown as tappable options.
+- Use queue_download only when the user explicitly wants the single best item grabbed automatically (e.g. one movie).
 - Reply in concise Markdown (short paragraphs, **bold** for titles, lists where helpful).
 - Only help download content the user has the legal right to obtain.`;
 
@@ -148,6 +172,46 @@ async function execTool(
     } catch (e) {
       emit({ type: "status", message: `Failed: ${(e as Error).message}` });
       return { queued: false, error: (e as Error).message };
+    }
+  }
+  if (name === "download_season") {
+    const title = String(args.title ?? "").trim();
+    if (!title) return { error: "A show title is required." };
+    const seasonArg = args.season != null ? Number(args.season) : undefined;
+    const year = args.year != null ? Number(args.year) : undefined;
+    try {
+      const cfg = await getConfig();
+      if (!cfg.tmdb.apiKey) return { error: "TMDB is not configured (Settings)." };
+      emit({ type: "status", message: `Resolving “${title}”…` });
+      const hit = await searchTitle(cfg.tmdb.apiKey, "tv", title, year);
+      if (!hit) return { error: `Couldn't find “${title}” on TMDB.` };
+      let seasons: number[];
+      if (seasonArg && Number.isInteger(seasonArg) && seasonArg >= 1) {
+        seasons = [seasonArg];
+      } else {
+        const details = await getTvDetails(cfg.tmdb.apiKey, hit.tmdbId);
+        seasons = (details?.seasons ?? []).map((s) => s.seasonNumber).filter((n) => n >= 1);
+      }
+      if (seasons.length === 0) return { error: "No seasons found for that show." };
+      for (const s of seasons) {
+        await enqueueSeasonGrab({
+          tmdbId: hit.tmdbId,
+          title: hit.title,
+          year: hit.year ?? year ?? null,
+          season: s,
+          notify: false,
+        });
+      }
+      const label = seasons.length === 1 ? `Season ${seasons[0]}` : `${seasons.length} seasons`;
+      emit({ type: "action", message: `Grabbing ${hit.title} — ${label}` });
+      return {
+        queued: true,
+        title: hit.title,
+        seasons,
+        note: "Queued a background season-grab (validated pack, else episode-by-episode into one folder). Tell the user it's grabbing and episodes will appear in Downloads — do NOT list individual releases.",
+      };
+    } catch (e) {
+      return { error: (e as Error).message };
     }
   }
   return { error: `Unknown tool ${name}` };
