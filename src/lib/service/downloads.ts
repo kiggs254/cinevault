@@ -1,9 +1,11 @@
 import { prisma } from "../db";
-import { getConfig } from "../config";
+import { getConfig, type ResolvedConfig } from "../config";
 import { planQuery } from "../llm/search-planner";
 import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
-import { rankResults, pickAutoRelease } from "../scoring/scorer";
+import { rankResults, pickAutoRelease, isSingleSeasonPack } from "../scoring/scorer";
+import { getSeasonEpisodes, getTvDetails, type TmdbEpisode } from "../metadata/tmdb";
+import { notify } from "../telegram/client";
 import { enqueueDownload } from "../queue";
 import { publishProgress } from "../events";
 import { toDTO } from "../serialize";
@@ -177,38 +179,201 @@ export async function grabMovie(opts: {
   });
 }
 
-/** Direct-download a full season as a pack, searched as "Title Season N". */
+const DAY = 24 * 60 * 60 * 1000;
+const YEAR = 365 * DAY;
+
+export interface SeasonGrabResult {
+  season: number;
+  mode: "pack" | "episodes";
+  queued: number; // Download rows created
+  failed: number; // episodes (or the pack) with no acceptable source
+  total: number; // aired episodes considered (episodes) or 1 (pack)
+  reason?: string;
+}
+
+const airedTs = (e: Pick<TmdbEpisode, "airDate">): number =>
+  e.airDate ? new Date(`${e.airDate}T00:00:00Z`).getTime() : NaN;
+
+/** Episodes already in the library for a show (by TMDB id or title), season+episode set. */
+export async function ownedEpisodeKeys(tmdbId: number, title: string): Promise<Set<string>> {
+  const rows = await prisma.download.findMany({
+    where: {
+      OR: [{ tmdbId }, { title: { contains: title, mode: "insensitive" } }],
+      season: { not: null },
+      episode: { not: null },
+      status: { notIn: ["FAILED", "CANCELLED"] },
+    },
+    select: { season: true, episode: true },
+  });
+  return new Set(rows.map((r) => `${r.season}x${r.episode}`));
+}
+
+/**
+ * Search for and queue a single episode (720p, smallest well-seeded). Shared by
+ * the manual season grab and the follow scanner so both behave identically.
+ * `indexerIds` undefined = all indexers; `notify` false = no per-episode push.
+ */
+export async function grabEpisode(o: {
+  prowlarr: ProwlarrClient;
+  cfg: ResolvedConfig;
+  show: { title: string; year?: number | null; tmdbId: number };
+  ep: Pick<TmdbEpisode, "seasonNumber" | "episodeNumber" | "name">;
+  indexerIds?: number[];
+  notify?: boolean;
+}): Promise<boolean> {
+  const { prowlarr, cfg, show, ep } = o;
+  const q = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
+  const results = await prowlarr.search(q, {
+    categories: categoriesForKind("TV"),
+    limit: 40,
+    indexerIds: o.indexerIds,
+  });
+  const best = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+  if (!best) return false;
+  await createDownload({
+    releaseName: best.title,
+    source: best.magnetUrl ?? best.downloadUrl ?? "",
+    infoHash: best.infoHash,
+    indexer: best.indexer,
+    size: best.size,
+    seeders: best.seeders,
+    kind: "TV",
+    title: show.title,
+    year: show.year ?? null,
+    season: ep.seasonNumber,
+    episode: ep.episodeNumber,
+    tmdbId: show.tmdbId,
+    query: q,
+  });
+  if (o.notify !== false) {
+    await notify(
+      `⬇️ New episode: ${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` — ${ep.name}` : ""} → downloading.`,
+    );
+  }
+  return true;
+}
+
+/** Find a validated pack for EXACTLY this season (720p, smallest well-seeded). */
+async function findSeasonPack(
+  prowlarr: ProwlarrClient,
+  cfg: ResolvedConfig,
+  title: string,
+  season: number,
+): Promise<ScoredResult | null> {
+  const cats = categoriesForKind("TV");
+  for (const q of [`${title} Season ${season}`, `${title} S${pad2(season)}`]) {
+    const results = await prowlarr.search(q, { categories: cats, limit: 60 });
+    const packs = results.filter((r) => isSingleSeasonPack(r.title, season));
+    const chosen = pickAutoRelease(packs, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.3 });
+    if (chosen) return chosen;
+  }
+  return null;
+}
+
+/**
+ * Grab a whole season. If the season's last episode aired more than a year ago,
+ * try a validated single-season pack; otherwise (recent, or no pack found)
+ * download every aired episode individually into one `TV/<Show>/Season NN`
+ * folder. Not-yet-aired episodes are left for the follow scanner to backfill.
+ */
 export async function grabSeason(opts: {
   tmdbId: number;
   title: string;
   season: number;
   year?: number | null;
-}): Promise<DownloadDTO | null> {
+  indexerIds?: number[];
+  notify?: boolean;
+}): Promise<SeasonGrabResult> {
+  const base: SeasonGrabResult = {
+    season: opts.season,
+    mode: "episodes",
+    queued: 0,
+    failed: 0,
+    total: 0,
+  };
+  if (opts.season <= 0) return { ...base, reason: "invalid season" };
+
   const cfg = await getConfig();
+  if (!cfg.tmdb.apiKey) return { ...base, reason: "TMDB not configured" };
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
-  const cats = categoriesForKind("TV");
-  const queries = [`${opts.title} Season ${opts.season}`, `${opts.title} S${pad2(opts.season)}`];
-  for (const q of queries) {
-    const results = await prowlarr.search(q, { categories: cats, limit: 60 });
-    const chosen = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.3 });
-    if (chosen) {
-      return createDownload({
-        releaseName: chosen.title,
-        source: chosen.magnetUrl ?? chosen.downloadUrl ?? "",
-        infoHash: chosen.infoHash,
-        indexer: chosen.indexer,
-        size: chosen.size,
-        seeders: chosen.seeders,
+  const now = Date.now();
+  const availableCutoff = now - DAY; // available the day after airing
+
+  const eps = await getSeasonEpisodes(cfg.tmdb.apiKey, opts.tmdbId, opts.season);
+  let available = eps.filter(
+    (e) => e.episodeNumber >= 1 && !Number.isNaN(airedTs(e)) && airedTs(e) <= availableCutoff,
+  );
+
+  // Fallback: TMDB has no per-episode air dates but the season itself is old.
+  let seasonAired: number | undefined;
+  if (available.length === 0) {
+    const details = await getTvDetails(cfg.tmdb.apiKey, opts.tmdbId);
+    const s = details?.seasons.find((x) => x.seasonNumber === opts.season);
+    seasonAired = s?.airDate ? new Date(`${s.airDate}T00:00:00Z`).getTime() : undefined;
+    const noEpDates = eps.length > 0 && eps.every((e) => !e.airDate);
+    if (noEpDates && seasonAired && now - seasonAired > YEAR) {
+      available = eps.filter((e) => e.episodeNumber >= 1);
+    }
+  }
+  if (available.length === 0) return { ...base, reason: "no aired episodes" };
+
+  const lastAired = Math.max(
+    ...available.map(airedTs).filter((t) => !Number.isNaN(t)),
+    seasonAired ?? -Infinity,
+  );
+  const olderThanYear = Number.isFinite(lastAired) && now - lastAired > YEAR;
+
+  // Old, complete season → prefer a validated single-season pack.
+  if (olderThanYear) {
+    const pack = await findSeasonPack(prowlarr, cfg, opts.title, opts.season);
+    if (pack) {
+      await createDownload({
+        releaseName: pack.title,
+        source: pack.magnetUrl ?? pack.downloadUrl ?? "",
+        infoHash: pack.infoHash,
+        indexer: pack.indexer,
+        size: pack.size,
+        seeders: pack.seeders,
         kind: "TV",
         title: opts.title,
         year: opts.year ?? null,
         season: opts.season,
         tmdbId: opts.tmdbId,
-        query: q,
+        query: `${opts.title} Season ${opts.season}`,
       });
+      return { season: opts.season, mode: "pack", queued: 1, failed: 0, total: 1 };
     }
   }
-  return null;
+
+  // Episode-by-episode: every aired, not-yet-owned episode.
+  const owned = await ownedEpisodeKeys(opts.tmdbId, opts.title);
+  let queued = 0;
+  let failed = 0;
+  for (const ep of available) {
+    if (owned.has(`${ep.seasonNumber}x${ep.episodeNumber}`)) continue;
+    const ok = await grabEpisode({
+      prowlarr,
+      cfg,
+      show: { title: opts.title, year: opts.year ?? null, tmdbId: opts.tmdbId },
+      ep,
+      indexerIds: opts.indexerIds,
+      notify: opts.notify,
+    });
+    if (ok) {
+      queued++;
+      owned.add(`${ep.seasonNumber}x${ep.episodeNumber}`);
+    } else {
+      failed++;
+    }
+  }
+  return {
+    season: opts.season,
+    mode: "episodes",
+    queued,
+    failed,
+    total: available.length,
+    reason: olderThanYear ? "pack not found → episodes" : undefined,
+  };
 }
 
 export async function listDownloads(): Promise<DownloadDTO[]> {
@@ -247,6 +412,74 @@ export async function removeDownload(id: string): Promise<void> {
   }
   await prisma.download.delete({ where: { id } });
   await publishProgress({ type: "deleted", downloadId: id });
+}
+
+/** Fake-file floor (GB) by download kind — episodes are small, packs large. */
+function floorForDownload(dl: { kind: MediaKind; season: number | null; episode: number | null }): number {
+  if (dl.kind === "TV") return dl.episode != null ? 0.05 : 0.3;
+  if (dl.kind === "MOVIE") return 0.2;
+  return 0.05;
+}
+
+/** Lowercased info-hash of a result, from its field or magnet URI. */
+function resultHash(r: { infoHash?: string; magnetUrl?: string }): string | undefined {
+  const h = r.infoHash ?? (r.magnetUrl ? parseInfoHash(r.magnetUrl) : undefined);
+  return h?.toLowerCase();
+}
+
+/** Reconstruct an indexer query from a download when the stored one is missing. */
+function rebuildQuery(dl: {
+  kind: MediaKind;
+  title: string;
+  year: number | null;
+  season: number | null;
+  episode: number | null;
+}): string {
+  if (dl.kind === "TV" && dl.season != null) {
+    return dl.episode != null
+      ? `${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)}`
+      : `${dl.title} Season ${dl.season}`;
+  }
+  return `${dl.title}${dl.year ? ` ${dl.year}` : ""}`;
+}
+
+/**
+ * Find a replacement release for a stalled download: re-run its search, drop any
+ * source already tried (plus the current one), keep only valid candidates, and
+ * pick the next-best (720p, smallest well-seeded). Null when nothing new fits.
+ */
+export async function reSource(
+  dl: {
+    kind: MediaKind;
+    query: string | null;
+    title: string;
+    year: number | null;
+    season: number | null;
+    episode: number | null;
+    infoHash: string | null;
+  },
+  triedInfoHashes: string[],
+): Promise<ScoredResult | null> {
+  const cfg = await getConfig();
+  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return null;
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+
+  const query = dl.query?.trim() || rebuildQuery(dl);
+  if (!query) return null;
+  const results = await prowlarr.search(query, { categories: categoriesForKind(dl.kind), limit: 60 });
+
+  const exclude = new Set(triedInfoHashes.map((h) => h.toLowerCase()));
+  if (dl.infoHash) exclude.add(dl.infoHash.toLowerCase());
+
+  let pool = results.filter((r) => {
+    const h = resultHash(r);
+    return !h || !exclude.has(h);
+  });
+  // Season packs must still validate to exactly this season.
+  if (dl.kind === "TV" && dl.season != null && dl.episode == null) {
+    pool = pool.filter((r) => isSingleSeasonPack(r.title, dl.season!));
+  }
+  return pickAutoRelease(pool, { minSeeders: cfg.prefs.minSeeders, floorGB: floorForDownload(dl) });
 }
 
 export { GB };

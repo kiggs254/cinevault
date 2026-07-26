@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { grabMovie, grabSeason } from "@/lib/service/downloads";
+import { grabMovie, grabSeason, type SeasonGrabResult } from "@/lib/service/downloads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,14 +33,26 @@ export async function POST(req: Request) {
     if (seasons.length === 0) {
       return NextResponse.json({ error: "Select at least one season" }, { status: 400 });
     }
+    // Bulk manual grab: search all indexers, no per-episode Telegram push.
+    const results: SeasonGrabResult[] = [];
     const queued: string[] = [];
     const failed: number[] = [];
+    let totalQueued = 0;
     for (const s of seasons) {
-      const dl = await grabSeason({ tmdbId, title, season: s, year: b.year ?? null });
-      if (dl) queued.push(`Season ${s}`);
-      else failed.push(s);
+      const r = await grabSeason({ tmdbId, title, season: s, year: b.year ?? null, notify: false });
+      results.push(r);
+      totalQueued += r.queued;
+      if (r.queued > 0) {
+        queued.push(
+          r.mode === "pack"
+            ? `Season ${s} (pack)`
+            : `Season ${s} (${r.queued} ep${r.queued === 1 ? "" : "s"})`,
+        );
+      } else {
+        failed.push(s);
+      }
     }
-    return NextResponse.json({ queued, failed });
+    return NextResponse.json({ queued, failed, totalQueued, seasons: results });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

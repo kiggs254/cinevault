@@ -12,6 +12,7 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
+import { reSource } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -21,7 +22,8 @@ import type { DownloadJobData, DownloadStatus, MediaKind } from "../lib/types";
 const CATEGORY = "moviehub";
 const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
-const STALL_MS = 30 * 60 * 1000;
+const STALL_MS = 10 * 60 * 1000; // no-progress window before switching source
+const MAX_RESOURCE_ATTEMPTS = 3; // source swaps before giving up
 
 // How many jobs the worker runs at once. Each active download holds a slot for
 // its whole download + S3 upload, so this also bounds simultaneous uploads.
@@ -85,6 +87,14 @@ async function waitForTorrent(
   return undefined;
 }
 
+/** A torrent went dead enough to switch source — recoverable, not a hard fail. */
+class StalledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StalledError";
+  }
+}
+
 async function pollUntilComplete(
   qb: QbClient,
   id: string,
@@ -97,7 +107,7 @@ async function pollUntilComplete(
     await sleep(POLL_MS);
     const info = (await qb.getByHash(hash)) ?? (await qb.getByTag(id));
     if (!info) continue;
-    if (isErrored(info)) throw new Error(`qBittorrent reported "${info.state}"`);
+    if (isErrored(info)) throw new StalledError(`qBittorrent reported "${info.state}"`);
 
     const pct = Math.min(100, info.progress * 100);
     await prisma.download
@@ -127,13 +137,135 @@ async function pollUntilComplete(
 
     if (isComplete(info)) return info;
 
-    if (pct > lastProgress + 0.01) {
+    // Reset on ANY movement (speed or progress); trip only when nothing is
+    // moving for STALL_MS. A slow-but-steady download keeps dlspeed > 0 and is
+    // never swapped, regardless of seeder count.
+    if (info.dlspeed > 0 || pct > lastProgress + 0.01) {
       lastProgress = pct;
       stalledSince = Date.now();
-    } else if (info.num_seeds === 0 && Date.now() - stalledSince > STALL_MS) {
-      throw new Error("Stalled: no seeders and no progress for 30 minutes");
+    } else if (Date.now() - stalledSince > STALL_MS) {
+      throw new StalledError("no download progress for 10 minutes");
     }
   }
+}
+
+type StallOutcome = QbTorrentInfo | "gave-up" | "superseded";
+
+function readResourceMeta(metadata: unknown): { triedInfoHashes: string[]; resourceAttempts: number } {
+  const m =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : {};
+  const tried = Array.isArray(m.triedInfoHashes)
+    ? m.triedInfoHashes.filter((x): x is string => typeof x === "string")
+    : [];
+  const attempts = typeof m.resourceAttempts === "number" ? m.resourceAttempts : 0;
+  return { triedInfoHashes: tried, resourceAttempts: attempts };
+}
+
+/** Poll to completion; on a stall, switch to another source and keep polling. */
+async function downloadWithReSource(
+  qb: QbClient,
+  id: string,
+  start: QbTorrentInfo,
+  cfg: Awaited<ReturnType<typeof getConfig>>,
+): Promise<QbTorrentInfo> {
+  let current = start;
+  for (;;) {
+    try {
+      return await pollUntilComplete(qb, id, current.hash);
+    } catch (e) {
+      if (!(e instanceof StalledError)) throw e;
+      const next = await handleStall(qb, id, current, cfg);
+      if (next === "gave-up") throw e; // fail with the stall reason
+      if (next === "superseded") {
+        // Another worker (restart-recovery) already swapped — reload and continue.
+        const dl = await prisma.download.findUnique({ where: { id }, select: { qbitHash: true } });
+        const info =
+          (dl?.qbitHash ? await qb.getByHash(dl.qbitHash) : undefined) ?? (await qb.getByTag(id));
+        if (info) current = info;
+        continue;
+      }
+      current = next;
+    }
+  }
+}
+
+/**
+ * Handle a stalled torrent: find a fresh source, atomically claim the swap via a
+ * compare-and-swap on qbitHash (so an overlapping worker can't double-add), then
+ * replace the torrent. Tried hashes + attempt count persist in `metadata`.
+ */
+async function handleStall(
+  qb: QbClient,
+  id: string,
+  current: QbTorrentInfo,
+  cfg: Awaited<ReturnType<typeof getConfig>>,
+): Promise<StallOutcome> {
+  const dl = await prisma.download.findUnique({ where: { id } });
+  if (!dl) return "gave-up";
+  const meta = readResourceMeta(dl.metadata);
+  if (meta.resourceAttempts >= MAX_RESOURCE_ATTEMPTS) return "gave-up";
+
+  const currentHash = (dl.infoHash ?? current.hash).toLowerCase();
+  const chosen = await reSource(
+    {
+      kind: dl.kind as MediaKind,
+      query: dl.query,
+      title: dl.title,
+      year: dl.year,
+      season: dl.season,
+      episode: dl.episode,
+      infoHash: dl.infoHash,
+    },
+    [...meta.triedInfoHashes, currentHash],
+  );
+  if (!chosen) return "gave-up";
+
+  const isMagnet = !!chosen.magnetUrl;
+  const newSource = chosen.magnetUrl ?? chosen.downloadUrl;
+  if (!newSource) return "gave-up";
+  const newHash =
+    (chosen.infoHash ?? (chosen.magnetUrl ? parseInfoHash(chosen.magnetUrl) : undefined))?.toLowerCase() ??
+    null;
+
+  // CAS: only the worker still holding `current.hash` wins the swap.
+  const claim = await prisma.download.updateMany({
+    where: { id, qbitHash: current.hash },
+    data: {
+      magnet: newSource,
+      infoHash: newHash,
+      indexer: chosen.indexer ?? null,
+      seeders: chosen.seeders ?? null,
+      releaseName: chosen.title,
+      progress: 0,
+      dlSpeed: 0,
+      metadata: {
+        triedInfoHashes: [...meta.triedInfoHashes, currentHash, ...(newHash ? [newHash] : [])],
+        resourceAttempts: meta.resourceAttempts + 1,
+      },
+    },
+  });
+  if (claim.count === 0) return "superseded";
+
+  await qb.delete([current.hash], true).catch(() => {});
+  await qb.addTorrent({
+    magnet: isMagnet ? newSource : undefined,
+    torrentUrl: isMagnet ? undefined : newSource,
+    savePath: cfg.prefs.downloadDir,
+    category: CATEGORY,
+    tag: id,
+  });
+  const info = await waitForTorrent(qb, id, newHash ?? undefined, REGISTER_TIMEOUT_MS);
+  if (!info) return "gave-up";
+  await prisma.download.update({ where: { id }, data: { qbitHash: info.hash } });
+  await publishProgress({
+    type: "status",
+    downloadId: id,
+    status: "DOWNLOADING",
+    message: `Stalled — switched source (${meta.resourceAttempts + 1}/${MAX_RESOURCE_ATTEMPTS})`,
+  });
+  return info;
 }
 
 async function processDownload(id: string): Promise<void> {
@@ -172,8 +304,8 @@ async function processDownload(id: string): Promise<void> {
 
   await prisma.download.update({ where: { id }, data: { qbitHash: info.hash } });
 
-  // Download.
-  info = await pollUntilComplete(qb, id, info.hash);
+  // Download, auto-switching source if a torrent stalls for STALL_MS.
+  info = await downloadWithReSource(qb, id, info, cfg);
 
   // Organize + enrich, then upload.
   await setStatus(id, "UPLOADING", 0);

@@ -1,20 +1,13 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
-import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
-import { pickAutoRelease } from "../scoring/scorer";
-import { createDownload } from "./downloads";
+import { ProwlarrClient } from "../indexers/prowlarr";
+import { grabEpisode, ownedEpisodeKeys } from "./downloads";
 import { notify } from "../telegram/client";
-import {
-  getTvDetails,
-  getSeasonEpisodes,
-  searchTitle,
-  type TmdbEpisode,
-} from "../metadata/tmdb";
+import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { getWatchingSeries, jellyfinReady } from "../jellyfin/client";
 import type { FollowedShow } from "@prisma/client";
 
 const DAY = 24 * 60 * 60 * 1000;
-const pad = (n: number) => String(n).padStart(2, "0");
 
 /** Follow a show by TMDB id (enriched from TMDB). Idempotent. */
 export async function followShow(
@@ -69,54 +62,6 @@ export async function autoFollowFromJellyfin(): Promise<{ added: number }> {
   return { added };
 }
 
-/** Episodes already in the library for a show (by TMDB id or title match). */
-async function ownedEpisodes(show: FollowedShow): Promise<Set<string>> {
-  const rows = await prisma.download.findMany({
-    where: {
-      OR: [{ tmdbId: show.tmdbId }, { title: { contains: show.title, mode: "insensitive" } }],
-      season: { not: null },
-      episode: { not: null },
-      status: { notIn: ["FAILED", "CANCELLED"] },
-    },
-    select: { season: true, episode: true },
-  });
-  return new Set(rows.map((r) => `${r.season}x${r.episode}`));
-}
-
-async function grabEpisode(
-  prowlarr: ProwlarrClient,
-  cfg: Awaited<ReturnType<typeof getConfig>>,
-  show: FollowedShow,
-  ep: TmdbEpisode,
-): Promise<boolean> {
-  const q = `${show.title} S${pad(ep.seasonNumber)}E${pad(ep.episodeNumber)}`;
-  const results = await prowlarr.search(q, {
-    categories: categoriesForKind("TV"),
-    limit: 40,
-    indexerIds: cfg.profile.legalIndexerIds,
-  });
-  // 720p, smallest well-seeded episode.
-  const best = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
-  if (!best) return false;
-  await createDownload({
-    releaseName: best.title,
-    source: best.magnetUrl ?? best.downloadUrl ?? "",
-    infoHash: best.infoHash,
-    indexer: best.indexer,
-    size: best.size,
-    seeders: best.seeders,
-    kind: "TV",
-    title: show.title,
-    year: show.year,
-    season: ep.seasonNumber,
-    episode: ep.episodeNumber,
-    tmdbId: show.tmdbId,
-    query: q,
-  });
-  await notify(`⬇️ New episode: ${show.title} S${pad(ep.seasonNumber)}E${pad(ep.episodeNumber)}${ep.name ? ` — ${ep.name}` : ""} → downloading.`);
-  return true;
-}
-
 /**
  * Check followed shows for newly aired episodes (aired ≥1 day ago, after the
  * follow began) that aren't in the library yet, and auto-download them.
@@ -141,7 +86,7 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
         .map((s) => s.seasonNumber)
         .sort((a, b) => b - a)
         .slice(0, 2); // latest two seasons only
-      const owned = await ownedEpisodes(show);
+      const owned = await ownedEpisodeKeys(show.tmdbId, show.title);
       let grabbedThisShow = 0;
 
       for (const sn of seasons) {
@@ -155,7 +100,16 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
           if (aired < windowStart) continue; // before we started following
           const key = `${ep.seasonNumber}x${ep.episodeNumber}`;
           if (owned.has(key)) continue;
-          if (await grabEpisode(prowlarr, cfg, show, ep)) {
+          if (
+            await grabEpisode({
+              prowlarr,
+              cfg,
+              show,
+              ep,
+              indexerIds: cfg.profile.legalIndexerIds,
+              notify: true,
+            })
+          ) {
             grabbed++;
             grabbedThisShow++;
             owned.add(key);

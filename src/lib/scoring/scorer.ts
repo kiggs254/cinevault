@@ -56,6 +56,61 @@ export function parseRelease(title: string): ParsedRelease {
   return { resolution, source, codec, audio, hdr, group, isCam, isRepack, seasonPack };
 }
 
+// --- Season / episode classification --------------------------------------
+// Release names use dots/underscores/spaces as separators; `[\s._-]*` spans them.
+
+/** True if the name denotes a single episode (S02E05, S02.E05, S2 E5, 2x05). */
+export function isSingleEpisodeRelease(title: string): boolean {
+  return /\bs\d{1,2}[\s._-]*e\d{1,3}/i.test(title) || /\b\d{1,2}x\d{1,3}\b/i.test(title);
+}
+
+const COMPLETE_SERIES = /\b(the[\s._-]*)?complete[\s._-]*(series|collection|box[\s._-]*set|seasons)\b/i;
+const SEASON_RANGE =
+  /\bs(?:eason)?s?[\s._-]*0*(\d{1,2})[\s._-]*(?:-|–|—|to)[\s._-]*s?(?:eason)?[\s._-]*0*(\d{1,2})\b/i;
+
+/**
+ * Inclusive test: does this release contain `season`? Covers single-season names,
+ * ranges (S01-S03), and complete-series/collection packs. False for single
+ * episodes and "Season N Episode M". Used to filter re-source candidates.
+ */
+export function releaseCoversSeason(title: string, season: number): boolean {
+  if (season <= 0 || isSingleEpisodeRelease(title)) return false;
+
+  // Complete series/collection with no specific season token → covers everything.
+  if (COMPLETE_SERIES.test(title) && !/\bseason[\s._-]*0*\d/i.test(title)) return true;
+
+  const range = title.match(SEASON_RANGE);
+  if (range) {
+    const lo = Math.min(Number(range[1]), Number(range[2]));
+    const hi = Math.max(Number(range[1]), Number(range[2]));
+    if (season >= lo && season <= hi) return true;
+  }
+
+  if (seasonWordMatches(title, season)) return true;
+  return new RegExp(`\\bs0*${season}\\b(?![\\s._-]*e\\d)`, "i").test(title);
+}
+
+/**
+ * Exclusive test: is this a pack for EXACTLY this one season (not a range,
+ * complete-series, or single episode)? Used to select a season pack so a
+ * multi-season pack can't be grabbed once per selected season.
+ */
+export function isSingleSeasonPack(title: string, season: number): boolean {
+  if (season <= 0 || isSingleEpisodeRelease(title)) return false;
+  if (/\bseasons\b/i.test(title)) return false; // plural → multi-season
+  if (COMPLETE_SERIES.test(title)) return false;
+  if (SEASON_RANGE.test(title)) return false;
+  return seasonWordMatches(title, season);
+}
+
+/** "Season N" or bare "S0N" for exactly `season`, excluding "Season N Episode M". */
+function seasonWordMatches(title: string, season: number): boolean {
+  if (new RegExp(`\\bseason[\\s._-]*0*${season}[\\s._-]*e`, "i").test(title)) return false; // "Season 2 Episode 5"
+  const word = new RegExp(`\\bseason[\\s._-]*0*${season}\\b`, "i");
+  const bare = new RegExp(`\\bs0*${season}\\b(?![\\s._-]*e\\d)`, "i");
+  return word.test(title) || bare.test(title);
+}
+
 export interface ScorePrefs {
   preferredQuality: string; // "2160p" | "1080p" | "720p" | "480p" | "any"
   minSeeders: number;

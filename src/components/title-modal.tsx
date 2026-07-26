@@ -134,12 +134,12 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     setBusy(true);
     setMsg("");
     try {
-      const r = await jsonFetch<{ queued: string[]; failed: number[] }>("/api/download/tmdb", {
+      const r = await jsonFetch<{ queued: string[]; failed: number[]; totalQueued?: number }>("/api/download/tmdb", {
         method: "POST",
         body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "tv", title: details?.title ?? seed.title, year: details?.year ?? seed.year, seasons: [...selected] }),
       });
       const parts = [];
-      if (r.queued.length) parts.push(`Queued ${r.queued.join(", ")}`);
+      if (r.queued.length) parts.push(`Queued ${r.totalQueued ?? r.queued.length}: ${r.queued.join(", ")}`);
       if (r.failed.length) parts.push(`no release for Season ${r.failed.join(", ")}`);
       setMsg(parts.join(" · ") || "Nothing queued.");
     } catch (e) {
