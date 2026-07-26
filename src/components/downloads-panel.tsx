@@ -12,6 +12,7 @@ import {
   Shuffle,
   Loader2,
   ChevronDown,
+  DownloadCloud,
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/util";
 import { jsonFetch } from "@/lib/client";
@@ -195,10 +196,16 @@ export function DownloadRow({
                   {d.releaseName}
                 </p>
               </div>
-              <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
-                {active && <span className="dot dot-live" style={{ background: m.color, color: m.color }} />}
-                {m.label}
-              </span>
+              {d.status === "COMPLETED" ? (
+                <span className="flex-none text-success" title="Downloaded">
+                  <DownloadCloud size={16} />
+                </span>
+              ) : (
+                <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
+                  {active && <span className="dot dot-live" style={{ background: m.color, color: m.color }} />}
+                  {m.label}
+                </span>
+              )}
             </div>
 
             {active && (

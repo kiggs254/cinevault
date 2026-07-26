@@ -8,6 +8,7 @@ import {
   Loader2,
   Sparkles,
   Tv,
+  Film,
   Check,
   RefreshCw,
 } from "lucide-react";
@@ -71,9 +72,12 @@ export default function DiscoverPage() {
   const [seed, setSeed] = useState<TitleSeed | null>(null);
   const [tab, setTab] = useState<"foryou" | "following">("foryou");
   const [showTaste, setShowTaste] = useState(false);
+  const [recType, setRecType] = useState<"all" | "movie" | "tv">("all");
 
   const openRec = (r: Rec) =>
     setSeed({ tmdbId: r.tmdbId, mediaType: r.mediaType, title: r.title, year: r.year, posterUrl: r.posterUrl });
+
+  const shownRecs = recType === "all" ? recs : recs.filter((r) => r.mediaType === recType);
 
   const loadRecs = useCallback(
     () =>
@@ -227,6 +231,29 @@ export default function DiscoverPage() {
         ))}
       </div>
 
+      {/* Movies / TV separator */}
+      {tab === "foryou" && recs.length > 0 && (
+        <div className="mb-5 flex gap-2">
+          {(
+            [
+              ["all", "All"],
+              ["movie", "Movies"],
+              ["tv", "TV"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => setRecType(v)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                recType === v ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Your taste — collapsed by default */}
       {tab === "foryou" && taste?.summary && (
         <div className="mb-5">
@@ -350,17 +377,21 @@ export default function DiscoverPage() {
       <section className="mb-8">
         <div className="mb-3 flex items-center gap-2">
           <Sparkles size={16} className="text-accent" />
-          <h2 className="label">For you</h2>
-          <span className="badge">{recs.length}</span>
+          <h2 className="label">{recType === "movie" ? "Movies for you" : recType === "tv" ? "Shows for you" : "For you"}</h2>
+          <span className="badge">{shownRecs.length}</span>
         </div>
 
         {recs.length === 0 ? (
           <p className="text-sm text-faint">
             {refreshing ? "Building your picks…" : "No picks yet. Hit “Refresh picks”. The more you watch, the better they get."}
           </p>
+        ) : shownRecs.length === 0 ? (
+          <p className="text-sm text-faint">
+            No {recType === "movie" ? "movie" : "TV"} picks right now — try “All”.
+          </p>
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-            {recs.map((r) => (
+            {shownRecs.map((r) => (
               <div
                 key={r.id}
                 className="group relative overflow-hidden rounded-xl border border-border bg-surface transition-colors hover:border-accent"
@@ -372,7 +403,7 @@ export default function DiscoverPage() {
                       <img src={r.posterUrl} alt={r.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <div className="flex h-full items-center justify-center text-faint">
-                        <Tv size={26} />
+                        {r.mediaType === "tv" ? <Tv size={26} /> : <Film size={26} />}
                       </div>
                     )}
                     <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">

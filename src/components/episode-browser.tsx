@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Download, Play, Check, Film, Clock } from "lucide-react";
+import { Loader2, Download, Play, Check, Film, Clock, DownloadCloud } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 
 export interface SeasonInfo {
@@ -237,9 +237,15 @@ export function EpisodeBrowser({
                       <Play size={13} /> Open
                     </button>
                   ) : e.owned ? (
-                    <span className="flex items-center gap-1 text-[11px] text-success">
-                      <Check size={13} /> {completed ? "Downloaded" : "Downloading"}
-                    </span>
+                    completed ? (
+                      <span className="flex-none text-success" title="Downloaded">
+                        <DownloadCloud size={15} />
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[11px] text-accent">
+                        <Loader2 size={12} className="animate-spin" /> Downloading
+                      </span>
+                    )
                   ) : onDownloadEpisode ? (
                     <button
                       className="btn btn-ghost px-2.5 py-1.5 text-xs"

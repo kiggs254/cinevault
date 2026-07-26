@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, ChevronDown, RotateCw, Trash2, Film } from "lucide-react";
+import { Download, ChevronDown, RotateCw, Trash2, Film, DownloadCloud } from "lucide-react";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { DownloadRow } from "@/components/downloads-panel";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -110,9 +110,15 @@ function EpisodeRow({
           </span>
         )}
       </div>
-      <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
-        {m.label}
-      </span>
+      {d.status === "COMPLETED" ? (
+        <span className="flex-none text-success" title="Downloaded">
+          <DownloadCloud size={15} />
+        </span>
+      ) : (
+        <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
+          {m.label}
+        </span>
+      )}
       {(d.status === "FAILED" || d.status === "CANCELLED") && (
         <button className="btn btn-ghost flex-none px-2 py-1" title="Retry" onClick={() => onRetry(d.id)}>
           <RotateCw size={13} />
@@ -187,7 +193,11 @@ function GroupCard({
             Season {season} · {eps.length} episode{eps.length === 1 ? "" : "s"}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-            {done > 0 && <span className="text-success">{done} downloaded</span>}
+            {done > 0 && (
+              <span className="inline-flex items-center gap-1 text-success">
+                <DownloadCloud size={12} /> {done}
+              </span>
+            )}
             {active > 0 && <span className="text-accent">{active} downloading</span>}
             {failed > 0 && <span className="text-danger">{failed} failed</span>}
           </div>
