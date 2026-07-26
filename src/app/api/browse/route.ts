@@ -1,33 +1,21 @@
 import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
-import { getTrending, getPopular, getTopRated } from "@/lib/metadata/tmdb";
+import { browseCategory, BROWSE_CATEGORIES } from "@/lib/metadata/tmdb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Netflix-style browse rows sourced from TMDB. */
+/** Netflix-style browse rows sourced from TMDB (page 1 of each category). */
 export async function GET() {
   const cfg = await getConfig();
   const key = cfg.tmdb.apiKey;
   if (!key) return NextResponse.json({ rows: [], error: "TMDB API key not configured" });
 
-  const [trending, popMovies, popTv, topMovies, topTv] = await Promise.all([
-    getTrending(key, "all"),
-    getPopular(key, "movie"),
-    getPopular(key, "tv"),
-    getTopRated(key, "movie"),
-    getTopRated(key, "tv"),
-  ]);
-
-  const rows = [
-    { title: "Trending this week", items: trending },
-    { title: "Popular movies", items: popMovies },
-    { title: "Popular TV shows", items: popTv },
-    { title: "Top rated movies", items: topMovies },
-    { title: "Top rated TV", items: topTv },
-  ]
-    .map((r) => ({ title: r.title, items: r.items.filter((i) => i.posterUrl).slice(0, 20) }))
-    .filter((r) => r.items.length > 0);
+  const keys = Object.keys(BROWSE_CATEGORIES);
+  const results = await Promise.all(keys.map((k) => browseCategory(key, k, 1)));
+  const rows = results
+    .filter((r): r is NonNullable<typeof r> => !!r && r.items.length > 0)
+    .map((r) => ({ key: r.key, title: r.title, items: r.items.slice(0, 20) }));
 
   return NextResponse.json({ rows }, { headers: { "Cache-Control": "private, max-age=1800" } });
 }

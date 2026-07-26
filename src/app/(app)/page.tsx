@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search as SearchIcon, Loader2, Info, ChevronDown, ChevronUp } from "lucide-react";
+import Link from "next/link";
+import { Search as SearchIcon, Loader2, Info, ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
 import { useDownloads } from "@/components/use-downloads";
@@ -17,6 +18,7 @@ interface TmdbItem {
   overview?: string;
 }
 interface Row {
+  key: string;
   title: string;
   items: TmdbItem[];
 }
@@ -152,8 +154,16 @@ export default function HomePage() {
           <>
             {loading && <p className="text-sm text-faint">Loading…</p>}
             {rows.map((row) => (
-              <section key={row.title} className="mb-8">
-                <h2 className="label mb-3">{row.title}</h2>
+              <section key={row.key} className="mb-8">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="label">{row.title}</h2>
+                  <Link
+                    href={`/browse/${row.key}`}
+                    className="flex items-center gap-0.5 text-xs text-muted transition-colors hover:text-accent"
+                  >
+                    Show all <ChevronRight size={13} />
+                  </Link>
+                </div>
                 <div className="flex gap-3 overflow-x-auto pb-2">
                   {row.items.map((i) => (
                     <Poster key={`${i.mediaType}-${i.tmdbId}`} item={i} onClick={() => open(i)} />

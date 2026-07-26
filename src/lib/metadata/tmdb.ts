@@ -180,6 +180,46 @@ export async function getTopRated(apiKey: string, type: TmdbMediaType): Promise<
   return toTitles(await tmdbFetch(apiKey, `/${type}/top_rated`), type);
 }
 
+export interface BrowsePage {
+  key: string;
+  title: string;
+  items: TmdbTitle[];
+  page: number;
+  totalPages: number;
+}
+
+/** The Netflix-style browse rows, each backed by a paginated TMDB endpoint. */
+export const BROWSE_CATEGORIES: Record<string, { title: string; path: string; type?: TmdbMediaType }> = {
+  trending: { title: "Trending this week", path: "/trending/all/week" },
+  "popular-movies": { title: "Popular movies", path: "/movie/popular", type: "movie" },
+  "popular-tv": { title: "Popular TV shows", path: "/tv/popular", type: "tv" },
+  "top-movies": { title: "Top rated movies", path: "/movie/top_rated", type: "movie" },
+  "top-tv": { title: "Top rated TV", path: "/tv/top_rated", type: "tv" },
+};
+
+/** One page of a browse category (page 1 for rows, page N for "Show all"). */
+export async function browseCategory(
+  apiKey: string,
+  key: string,
+  page = 1,
+): Promise<BrowsePage | null> {
+  const cat = BROWSE_CATEGORIES[key];
+  if (!cat) return null;
+  const data = await tmdbFetch<{ results?: unknown[]; page?: number; total_pages?: number }>(
+    apiKey,
+    cat.path,
+    { page: String(Math.max(1, Math.min(page, 500))) },
+  );
+  const items = toTitles(data as { results?: unknown[] }, cat.type).filter((i) => i.posterUrl);
+  return {
+    key,
+    title: cat.title,
+    items,
+    page: data?.page ?? page,
+    totalPages: Math.min(data?.total_pages ?? 1, 500),
+  };
+}
+
 export async function discoverByGenres(
   apiKey: string,
   type: TmdbMediaType,
