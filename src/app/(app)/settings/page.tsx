@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Plug, Loader2, Check, X } from "lucide-react";
+import { Save, Plug, Loader2, Check, X, Sparkles, DownloadCloud, HardDrive, Clapperboard, Bell } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 
 type Settings = Record<string, string | number | boolean>;
@@ -13,7 +13,10 @@ type Field =
   | { k: string; label: string; type: "select"; options: string[] }
   | { k: string; label: string; type: "toggle" };
 
+type TabKey = "ai" | "downloads" | "storage" | "media" | "notifications";
+
 interface Section {
+  group: TabKey;
   title: string;
   desc: string;
   test?: string;
@@ -22,6 +25,7 @@ interface Section {
 
 const SECTIONS: Section[] = [
   {
+    group: "ai",
     title: "AI Providers",
     desc: "Moonshot (Kimi) handles reasoning; MiMo handles cheap classification. Both are OpenAI-compatible.",
     test: "ai",
@@ -36,6 +40,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "downloads",
     title: "Torrent Engine",
     desc: "qBittorrent Web API. On the same Docker network use http://qbittorrent:8080.",
     test: "qbit",
@@ -46,6 +51,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "downloads",
     title: "Indexers",
     desc: "Prowlarr aggregates your torrent indexers. Use http://prowlarr:9696 on the Docker network.",
     test: "prowlarr",
@@ -55,6 +61,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "storage",
     title: "Storage (Contabo S3)",
     desc: "S3-compatible object storage. Path-style addressing is used automatically.",
     test: "s3",
@@ -70,6 +77,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "media",
     title: "Jellyfin (watch history)",
     desc: "Reads what you watch to power recommendations, auto-follow, and retention. On the same Docker network use http://jellyfin:8096.",
     test: "jellyfin",
@@ -81,6 +89,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "notifications",
     title: "Telegram bot",
     desc: "Chat with the agent and get push notifications for new episodes, discoveries, and completed downloads. Create a bot with @BotFather, then message it to link.",
     test: "telegram",
@@ -90,6 +99,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "storage",
     title: "Storage retention",
     desc: "Automatically delete watched episodes & movies from S3 after a set period to reclaim space. Season packs are never auto-deleted.",
     fields: [
@@ -98,6 +108,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "downloads",
     title: "Preferences",
     desc: "Defaults the AI uses when ranking and selecting releases.",
     fields: [
@@ -107,6 +118,14 @@ const SECTIONS: Section[] = [
       { k: "deleteAfterUpload", label: "Delete local + torrent after S3 upload", type: "toggle" },
     ],
   },
+];
+
+const TABS: { key: TabKey; label: string; icon: typeof Sparkles }[] = [
+  { key: "ai", label: "AI", icon: Sparkles },
+  { key: "downloads", label: "Downloads", icon: DownloadCloud },
+  { key: "storage", label: "Storage", icon: HardDrive },
+  { key: "media", label: "Media", icon: Clapperboard },
+  { key: "notifications", label: "Notifications", icon: Bell },
 ];
 
 const DEFAULTS: Settings = {
@@ -135,6 +154,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState("");
   const [tests, setTests] = useState<Record<string, { ok?: boolean; msg?: string; busy?: boolean }>>({});
+  const [tab, setTab] = useState<TabKey>("ai");
 
   useEffect(() => {
     (async () => {
@@ -275,8 +295,25 @@ export default function SettingsPage() {
       {loading ? (
         <p className="text-sm text-faint">Loading configuration…</p>
       ) : (
-        <div className="space-y-6">
-          {SECTIONS.map((section) => {
+        <>
+          <div className="mb-6 flex flex-wrap gap-2">
+            {TABS.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors ${
+                  tab === key
+                    ? "border-accent bg-accent/10 text-ink"
+                    : "border-border text-muted hover:border-faint hover:text-ink"
+                }`}
+              >
+                <Icon size={15} /> {label}
+              </button>
+            ))}
+          </div>
+          <div className="space-y-6">
+            {SECTIONS.filter((s) => s.group === tab).map((section) => {
             const t = section.test ? tests[section.test] : undefined;
             return (
               <div key={section.title} className="panel p-6">
@@ -319,11 +356,12 @@ export default function SettingsPage() {
               </div>
             );
           })}
-          <p className="pb-10 text-xs text-faint">
-            Tip: “Test” checks the currently <span className="text-muted">saved</span> configuration —
-            save first, then test.
-          </p>
-        </div>
+            <p className="pb-10 text-xs text-faint">
+              Tip: “Test” checks the currently <span className="text-muted">saved</span> configuration —
+              save first, then test. Save applies to every tab.
+            </p>
+          </div>
+        </>
       )}
     </div>
   );
