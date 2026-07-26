@@ -16,6 +16,7 @@ import Link from "next/link";
 import { readSSE, jsonFetch } from "@/lib/client";
 import { Markdown } from "@/components/markdown";
 import { OptionsList, type ChatOption } from "@/components/options-list";
+import { useConfirm } from "@/components/confirm-dialog";
 
 type Item =
   | { kind: "msg"; role: "user" | "assistant"; content: string }
@@ -55,6 +56,7 @@ export default function ChatPage() {
   const [donePicks, setDonePicks] = useState<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement>(null);
   const skipSave = useRef(false);
+  const confirm = useConfirm();
 
   function scrollDown() {
     requestAnimationFrame(() =>
@@ -262,7 +264,11 @@ export default function ChatPage() {
                   <button
                     className="flex-none text-faint hover:text-danger"
                     title="Delete chat"
-                    onClick={() => deleteSession(s.id)}
+                    onClick={async () => {
+                      if (await confirm({ title: "Delete chat?", message: `“${s.title}” will be permanently deleted.`, confirmLabel: "Delete" })) {
+                        deleteSession(s.id);
+                      }
+                    }}
                   >
                     <Trash2 size={14} />
                   </button>

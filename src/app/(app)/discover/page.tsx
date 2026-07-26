@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
+import { useConfirm } from "@/components/confirm-dialog";
+import { TitleModal, type TitleSeed } from "@/components/title-modal";
 
 /* ------------------------------- types -------------------------------- */
 interface Taste {
@@ -114,6 +116,11 @@ export default function DiscoverPage() {
   const [wQuery, setWQuery] = useState("");
   const [wFeed, setWFeed] = useState("");
   const [wKind, setWKind] = useState("TV");
+  const confirm = useConfirm();
+  const [seed, setSeed] = useState<TitleSeed | null>(null);
+
+  const openRec = (r: Rec) =>
+    setSeed({ tmdbId: r.tmdbId, mediaType: r.mediaType, title: r.title, year: r.year, posterUrl: r.posterUrl });
 
   const loadRecs = useCallback(
     () =>
@@ -365,7 +372,17 @@ export default function DiscoverPage() {
                     <div className="flex h-full items-center justify-center text-faint"><Tv size={22} /></div>
                   )}
                   <button
-                    onClick={() => unfollow(f.id)}
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Unfollow show?",
+                          message: `Stop auto-downloading new episodes of “${f.title}”.`,
+                          confirmLabel: "Unfollow",
+                        })
+                      ) {
+                        unfollow(f.id);
+                      }
+                    }}
                     title="Unfollow"
                     className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-danger"
                   >
@@ -400,43 +417,41 @@ export default function DiscoverPage() {
             {refreshing ? "Building your picks…" : "No picks yet. Hit “Refresh picks”. The more you watch, the better they get."}
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
             {recs.map((r) => (
-              <div key={r.id} className="group overflow-hidden rounded-xl border border-border bg-surface">
-                <div className="relative aspect-[2/3] bg-surface-2">
-                  {r.posterUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={r.posterUrl} alt={r.title} className="h-full w-full object-cover" loading="lazy" />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-faint"><Tv size={26} /></div>
-                  )}
-                  <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">
-                    {r.mediaType === "tv" ? "TV" : "Movie"} · {r.score}%
-                  </span>
-                  <button
-                    onClick={() => recAction(r, "dismiss")}
-                    title="Not interested"
-                    className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-                <div className="p-3">
-                  <p className="truncate text-sm font-medium text-ink" title={r.title}>
-                    {r.title} {r.year ? <span className="text-faint">({r.year})</span> : null}
-                  </p>
-                  {r.reason && <p className="mt-1 line-clamp-2 text-xs text-muted">{r.reason}</p>}
-                  <div className="mt-3 flex gap-2">
-                    <button className="btn btn-accent flex-1 px-2 py-1.5 text-xs" onClick={() => recAction(r, "add")}>
-                      {r.mediaType === "tv" ? <><Plus size={13} /> Follow</> : <><Download size={13} /> Download</>}
-                    </button>
-                    {r.mediaType === "tv" && (
-                      <button className="btn btn-ghost px-2 py-1.5 text-xs" title="Download now" onClick={() => recAction(r, "download")}>
-                        <Download size={13} />
-                      </button>
+              <div
+                key={r.id}
+                className="group relative overflow-hidden rounded-xl border border-border bg-surface transition-colors hover:border-accent"
+              >
+                <button onClick={() => openRec(r)} className="block w-full text-left" title={`More info — ${r.title}`}>
+                  <div className="relative aspect-[2/3] bg-surface-2">
+                    {r.posterUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.posterUrl} alt={r.title} className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-faint">
+                        <Tv size={26} />
+                      </div>
                     )}
+                    <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">
+                      {r.mediaType === "tv" ? "TV" : "Movie"} · {r.score}%
+                    </span>
                   </div>
-                </div>
+                  <div className="p-3">
+                    <p className="truncate text-sm font-medium text-ink" title={r.title}>
+                      {r.title} {r.year ? <span className="text-faint">({r.year})</span> : null}
+                    </p>
+                    {r.reason && <p className="mt-1 line-clamp-2 text-xs text-muted">{r.reason}</p>}
+                  </div>
+                </button>
+                <button
+                  onClick={() => recAction(r, "dismiss")}
+                  title="Not interested"
+                  aria-label="Dismiss"
+                  className="absolute right-2 top-2 z-10 rounded-full bg-black/60 p-1.5 text-white transition-opacity hover:bg-danger sm:opacity-0 sm:group-hover:opacity-100"
+                >
+                  <X size={13} />
+                </button>
               </div>
             ))}
           </div>
@@ -550,7 +565,15 @@ export default function DiscoverPage() {
                   <div key={w.id} className="card flex items-center gap-2 p-2.5">
                     {w.type === "RSS" ? <Rss size={14} className="flex-none text-accent" /> : <SearchIcon size={14} className="flex-none text-accent" />}
                     <span className="min-w-0 flex-1 truncate text-sm text-ink">{w.label}</span>
-                    <button className="flex-none text-faint hover:text-danger" onClick={async () => { await fetch(`/api/watches/${w.id}`, { method: "DELETE" }); loadWatches(); }}>
+                    <button
+                      className="flex-none text-faint hover:text-danger"
+                      onClick={async () => {
+                        if (await confirm({ title: "Delete watch?", message: `“${w.label}” will stop being tracked.`, confirmLabel: "Delete" })) {
+                          await fetch(`/api/watches/${w.id}`, { method: "DELETE" });
+                          loadWatches();
+                        }
+                      }}
+                    >
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -579,6 +602,8 @@ export default function DiscoverPage() {
           </div>
         )}
       </section>
+
+      {seed && <TitleModal seed={seed} onClose={() => setSeed(null)} />}
     </div>
   );
 }

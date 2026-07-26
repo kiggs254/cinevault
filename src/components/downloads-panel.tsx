@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/util";
 import { jsonFetch } from "@/lib/client";
+import { useConfirm } from "@/components/confirm-dialog";
 import { OptionsList, type ChatOption } from "./options-list";
 import type { SearchResult } from "./result-card";
 import type { DownloadDTO, DownloadStatus } from "@/lib/types";
@@ -63,6 +64,7 @@ export function DownloadRow({
   const [loadingAlts, setLoadingAlts] = useState(false);
   const [pickId, setPickId] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const confirm = useConfirm();
 
   async function findAlternatives() {
     if (alts) {
@@ -228,7 +230,17 @@ export function DownloadRow({
           <button
             className="btn btn-ghost px-2.5 py-1.5 text-muted hover:text-danger"
             title="Remove"
-            onClick={() => onRemove(d.id)}
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: "Remove download?",
+                  message: `“${d.title}” will be removed and its archived file deleted from storage.`,
+                  confirmLabel: "Remove",
+                })
+              ) {
+                onRemove(d.id);
+              }
+            }}
           >
             <Trash2 size={14} />
           </button>

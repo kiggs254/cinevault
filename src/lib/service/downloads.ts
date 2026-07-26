@@ -5,7 +5,9 @@ import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
 import { rankResults, pickAutoRelease, isSingleSeasonPack, isEpisodeMatch } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, type TmdbEpisode } from "../metadata/tmdb";
+import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
+import type { Download } from "@prisma/client";
 import { enqueueDownload } from "../queue";
 import { publishProgress } from "../events";
 import { toDTO } from "../serialize";
@@ -401,18 +403,41 @@ export async function retryDownload(id: string): Promise<DownloadDTO | null> {
   return toDTO(updated);
 }
 
+/** Delete this download's own archived object(s) from S3 (best-effort). */
+async function deleteDownloadObjects(row: Download, cfg: ResolvedConfig): Promise<void> {
+  const bucket = row.s3Bucket ?? cfg.s3.bucket;
+  if (!bucket || !cfg.s3.endpoint || !cfg.s3.accessKeyId) return;
+  // Prefer the exact keys uploaded for this download (a pack has several); fall
+  // back to the single primary key. Never delete by shared folder prefix — that
+  // would take sibling episodes with it.
+  const meta =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const stored = Array.isArray(meta.s3Keys)
+    ? meta.s3Keys.filter((k): k is string => typeof k === "string")
+    : [];
+  const targets = stored.length ? stored : row.s3Key ? [row.s3Key] : [];
+  if (targets.length === 0) return;
+  const s3 = makeS3(cfg.s3);
+  for (const key of targets) {
+    await deleteObject(s3, bucket, key).catch(() => {});
+  }
+}
+
 export async function removeDownload(id: string): Promise<void> {
   const row = await prisma.download.findUnique({ where: { id } });
   if (!row) return;
+  const cfg = await getConfig();
   if (row.qbitHash) {
     try {
-      const cfg = await getConfig();
       const qb = new QbClient(cfg.qbit);
       await qb.delete([row.qbitHash], true);
     } catch {
       /* ignore qBittorrent errors during delete */
     }
   }
+  await deleteDownloadObjects(row, cfg).catch(() => {});
   await prisma.download.delete({ where: { id } });
   await publishProgress({ type: "deleted", downloadId: id });
 }

@@ -368,7 +368,7 @@ async function processDownload(id: string): Promise<void> {
     void publishProgress({ type: "progress", downloadId: id, status: "UPLOADING", progress: pct });
   }, 1000);
 
-  const { primaryKey, bytes } = await uploadContent({
+  const { primaryKey, bytes, keys } = await uploadContent({
     s3,
     bucket: cfg.s3.bucket,
     contentPath,
@@ -384,6 +384,7 @@ async function processDownload(id: string): Promise<void> {
       s3Bucket: cfg.s3.bucket,
       s3Key: primaryKey,
       s3Prefix: organized.s3Prefix,
+      metadata: { s3Keys: keys }, // exact objects to delete if this download is removed
       kind: organized.kind,
       title: organized.cleanTitle,
       year: organized.year ?? dl.year,

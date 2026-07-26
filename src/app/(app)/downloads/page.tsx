@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Download, ChevronDown, RotateCw, Trash2, Film } from "lucide-react";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { DownloadRow } from "@/components/downloads-panel";
+import { useConfirm } from "@/components/confirm-dialog";
 import type { DownloadDTO, DownloadStatus } from "@/lib/types";
 
 const PAGE_SIZE = 10;
@@ -92,6 +93,7 @@ function EpisodeRow({
 }) {
   const m = statusMeta(d.status);
   const active = isActiveStatus(d.status);
+  const confirm = useConfirm();
   return (
     <div className="flex items-center gap-3">
       <span className="mono w-14 flex-none text-xs text-muted">
@@ -119,7 +121,17 @@ function EpisodeRow({
       <button
         className="btn btn-ghost flex-none px-2 py-1 text-muted hover:text-danger"
         title="Remove"
-        onClick={() => onRemove(d.id)}
+        onClick={async () => {
+          if (
+            await confirm({
+              title: "Remove episode?",
+              message: `S${pad(d.season)}E${pad(d.episode)} will be removed and its file deleted from storage.`,
+              confirmLabel: "Remove",
+            })
+          ) {
+            onRemove(d.id);
+          }
+        }}
       >
         <Trash2 size={13} />
       </button>
