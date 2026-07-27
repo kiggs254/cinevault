@@ -74,7 +74,14 @@ export async function enqueueScan(): Promise<void> {
 
 /** Trigger any named maintenance job once, now (runs on the grab worker). */
 export async function enqueueJob(
-  name: "watch-scan" | "follow-scan" | "reco-refresh" | "auto-follow" | "retention" | "recover-stuck",
+  name:
+    | "watch-scan"
+    | "follow-scan"
+    | "reco-refresh"
+    | "auto-follow"
+    | "retention"
+    | "recover-stuck"
+    | "retry-failed",
 ): Promise<void> {
   await grabQueue().add(name, { downloadId: "" }, { removeOnComplete: true, removeOnFail: true });
 }
@@ -83,6 +90,7 @@ const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "recover-stuck", every: 5 * MIN, jobId: "recover-stuck-repeat" },
+  { name: "retry-failed", every: 30 * MIN, jobId: "retry-failed-repeat" },
   { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
   { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
   { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },

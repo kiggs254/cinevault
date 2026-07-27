@@ -13,8 +13,10 @@ export interface QbTorrentInfo {
   dlspeed: number;
   upspeed: number;
   eta: number;
-  num_seeds: number;
-  num_leechs: number;
+  num_seeds: number; // connected seeds
+  num_leechs: number; // connected peers
+  num_complete?: number; // seeds in the swarm (from tracker/DHT)
+  num_incomplete?: number; // leechers in the swarm
   state: string;
   save_path: string;
   content_path: string;

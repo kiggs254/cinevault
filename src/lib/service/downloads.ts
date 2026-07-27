@@ -153,6 +153,16 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
         return toDTO(alive);
       }
       // Only failed attempts exist → revive the newest with the new source.
+      const newHash = (
+        input.infoHash ??
+        (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined)
+      )?.toLowerCase();
+      // Keep the tried-source history growing (so smart retries never reconsider a
+      // known-bad release) but reset the re-source attempt counter for a fresh run.
+      const keptRow = rows.find((r) => r.id === keepId);
+      const mergedTried = [
+        ...new Set([...triedHashesFromMeta(keptRow?.metadata), ...(newHash ? [newHash] : [])]),
+      ];
       const revived = await prisma.download.update({
         where: { id: keepId },
         data: {
@@ -162,14 +172,11 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
           qbitHash: null,
           releaseName: input.releaseName,
           magnet: input.source,
-          infoHash:
-            input.infoHash ??
-            (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined) ??
-            null,
+          infoHash: newHash ?? null,
           indexer: input.indexer ?? null,
           seeders: input.seeders ?? null,
           sizeBytes: BigInt(Math.max(0, Math.round(input.size ?? 0))),
-          metadata: {}, // reset tried-hashes / re-source attempts for a clean retry
+          metadata: { triedInfoHashes: mergedTried, resourceAttempts: 0 },
         },
       });
       await enqueueDownload(revived.id);
@@ -638,6 +645,88 @@ export async function removeDownload(id: string): Promise<void> {
   await deleteDownloadObjects(row, cfg).catch(() => {});
   await prisma.download.delete({ where: { id } });
   await publishProgress({ type: "deleted", downloadId: id });
+}
+
+function triedHashesFromMeta(metadata: unknown): string[] {
+  const m =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : {};
+  return Array.isArray(m.triedInfoHashes)
+    ? (m.triedInfoHashes as unknown[]).filter((h): h is string => typeof h === "string")
+    : [];
+}
+
+/**
+ * Re-search FAILED episodes for a fresh, better source — skipping every release we
+ * already tried, and letting the scorer prefer more seeders / higher quality (so a
+ * dead 720p is replaced by a well-seeded 1080p when one exists). Reuses the failed
+ * row via createDownload's dedup, so it never creates duplicates. Periodic job.
+ */
+export async function retryFailed(): Promise<{ retried: number }> {
+  const cfg = await getConfig();
+  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey || !cfg.tmdb.apiKey) return { retried: 0 };
+  const failed = await prisma.download.findMany({
+    where: { status: "FAILED", kind: "TV", season: { not: null }, episode: { not: null } },
+    orderBy: { updatedAt: "asc" },
+    take: 15,
+  });
+  if (failed.length === 0) return { retried: 0 };
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  let retried = 0;
+  for (const dl of failed) {
+    if (dl.season == null || dl.episode == null) continue;
+    // Skip if a live/completed copy already covers this episode.
+    const covered = await prisma.download.findFirst({
+      where: {
+        id: { not: dl.id },
+        season: dl.season,
+        episode: dl.episode,
+        status: { notIn: ["FAILED", "CANCELLED"] },
+        OR: [
+          ...(dl.tmdbId ? [{ tmdbId: dl.tmdbId }] : []),
+          { title: { equals: dl.title, mode: "insensitive" as const } },
+        ],
+      },
+    });
+    if (covered) continue;
+    const tried = new Set(
+      [...triedHashesFromMeta(dl.metadata), dl.infoHash]
+        .filter((h): h is string => !!h)
+        .map((h) => h.toLowerCase()),
+    );
+    const q = `${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)}`;
+    const results = await prowlarr.search(q, { categories: categoriesForKind("TV"), limit: 100 });
+    const fresh = results.filter(
+      (r) =>
+        isEpisodeMatch(r.title, dl.season!, dl.episode!) &&
+        releaseTitleMatches(r.title, dl.title) &&
+        !tried.has((r.infoHash ?? "").toLowerCase()),
+    );
+    const best = pickAutoRelease(fresh, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+    if (!best) continue;
+    void logActivity(
+      `Re-searching ${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)} — new source (${best.seeders ?? 0} seeders)`,
+      { kind: "switch", title: dl.title },
+    );
+    await createDownload({
+      releaseName: best.title,
+      source: best.magnetUrl ?? best.downloadUrl ?? "",
+      infoHash: best.infoHash,
+      indexer: best.indexer,
+      size: best.size,
+      seeders: best.seeders,
+      kind: "TV",
+      title: dl.title,
+      year: dl.year,
+      season: dl.season,
+      episode: dl.episode,
+      tmdbId: dl.tmdbId ?? undefined,
+      query: q,
+    });
+    retried++;
+  }
+  return { retried };
 }
 
 /**

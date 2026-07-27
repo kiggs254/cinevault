@@ -12,7 +12,13 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
-import { reSource, grabSeason, recoverStuckDownloads, runEpisodeGrab } from "../lib/service/downloads";
+import {
+  reSource,
+  grabSeason,
+  recoverStuckDownloads,
+  runEpisodeGrab,
+  retryFailed,
+} from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -30,7 +36,8 @@ function epTag(season: number | null, episode: number | null): string {
 const CATEGORY = "moviehub";
 const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
-const STALL_MS = 10 * 60 * 1000; // no-progress window before switching source
+const STALL_MS = 10 * 60 * 1000; // grace for a connected-but-slow torrent
+const DEAD_MS = 2 * 60 * 1000; // grace when qBittorrent reports no seeders at all
 const MAX_RESOURCE_ATTEMPTS = 3; // source swaps before giving up
 
 // How many jobs the worker runs at once. Each active download holds a slot for
@@ -181,15 +188,24 @@ async function pollUntilComplete(
 
     if (isComplete(info)) return info;
 
-    // Reset on ANY movement (speed or progress), OR while qBittorrent is holding
-    // the torrent in its own queue / hash-check (dlspeed 0 through no fault of the
-    // source). Trip only when it should be downloading but nothing moves for
-    // STALL_MS — a slow-but-steady download keeps dlspeed > 0 and is never swapped.
+    // Stall detection driven by qBittorrent, not a fixed clock: reset on any
+    // movement, or while qBit is holding the torrent (queue/hash-check). When it's
+    // genuinely stuck, how long we wait comes from qBit's read of the swarm — no
+    // seeders anywhere = dead source, give up fast; connected-but-slow gets the
+    // longer grace. (Errored states re-source immediately, above.)
     if (info.dlspeed > 0 || pct > lastProgress + 0.01 || isHeldByQbittorrent(info)) {
       lastProgress = pct;
       stalledSince = Date.now();
-    } else if (Date.now() - stalledSince > STALL_MS) {
-      throw new StalledError("no download progress for 10 minutes");
+    } else {
+      const swarmSeeds = info.num_complete ?? info.num_seeds ?? 0;
+      const grace = swarmSeeds <= 0 ? DEAD_MS : STALL_MS;
+      if (Date.now() - stalledSince > grace) {
+        throw new StalledError(
+          swarmSeeds <= 0
+            ? `no seeders — qBittorrent state "${info.state}"`
+            : `no download progress — qBittorrent state "${info.state}"`,
+        );
+      }
     }
   }
 }
@@ -432,13 +448,50 @@ async function processDownload(id: string): Promise<void> {
     title: organized.cleanTitle,
   });
 
+  await dedupeCompletedEpisode(qb, id);
+
   if (cfg.prefs.deleteAfterUpload) {
     await qb.delete([info.hash], true).catch(() => {});
   }
 }
 
+/**
+ * Once an episode completes, remove any leftover FAILED/CANCELLED sibling rows for
+ * the same episode (and their dead torrents). Fixes the case where a duplicate had
+ * failed in the UI while another copy actually finished — leaving a stale "failed"
+ * row that, if retried, just re-queued a download of something already downloaded.
+ */
+async function dedupeCompletedEpisode(qb: QbClient, completedId: string): Promise<void> {
+  try {
+    const done = await prisma.download.findUnique({ where: { id: completedId } });
+    if (!done || done.season == null || done.episode == null) return;
+    const sibs = await prisma.download.findMany({
+      where: {
+        id: { not: completedId },
+        season: done.season,
+        episode: done.episode,
+        status: { in: ["FAILED", "CANCELLED"] },
+        OR: [
+          ...(done.tmdbId ? [{ tmdbId: done.tmdbId }] : []),
+          { title: { equals: done.title, mode: "insensitive" as const } },
+        ],
+      },
+      select: { id: true, qbitHash: true },
+    });
+    if (sibs.length === 0) return;
+    for (const s of sibs) {
+      if (s.qbitHash) await qb.delete([s.qbitHash], true).catch(() => {});
+      await publishProgress({ type: "deleted", downloadId: s.id });
+    }
+    await prisma.download.deleteMany({ where: { id: { in: sibs.map((s) => s.id) } } });
+  } catch {
+    /* best-effort */
+  }
+}
+
 const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   "recover-stuck": recoverStuckDownloads,
+  "retry-failed": retryFailed,
   "watch-scan": scanWatches,
   "follow-scan": scanFollowedShows,
   "reco-refresh": refreshRecommendations,
