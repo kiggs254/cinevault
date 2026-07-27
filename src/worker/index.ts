@@ -199,12 +199,18 @@ async function pollUntilComplete(
       stalledSince = Date.now();
     } else {
       const swarmSeeds = info.num_complete ?? info.num_seeds ?? 0;
-      const grace = swarmSeeds <= 0 ? DEAD_MS : STALL_MS;
+      // metaDL = can't even fetch the .torrent from the magnet → treat as dead and
+      // switch fast (its swarm counts are unreliable). Otherwise: no seeders → fast;
+      // connected-but-slow → the long grace.
+      const dead = info.state === "metaDL" || swarmSeeds <= 0;
+      const grace = dead ? DEAD_MS : STALL_MS;
       if (Date.now() - stalledSince > grace) {
         throw new StalledError(
-          swarmSeeds <= 0
-            ? `no seeders — qBittorrent state "${info.state}"`
-            : `no download progress — qBittorrent state "${info.state}"`,
+          info.state === "metaDL"
+            ? "couldn't fetch torrent metadata (dead magnet)"
+            : swarmSeeds <= 0
+              ? `no seeders — qBittorrent state "${info.state}"`
+              : `no download progress — qBittorrent state "${info.state}"`,
         );
       }
     }
