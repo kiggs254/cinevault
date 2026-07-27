@@ -33,8 +33,6 @@ const nextConfig: NextConfig = {
   // Do not leak the framework or ship source maps in production.
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
-  // No ESLint config is shipped; do not fail production builds on lint.
-  eslint: { ignoreDuringBuilds: true },
   // Keep native/server-only deps external instead of bundling them.
   serverExternalPackages: ["bullmq", "ioredis"],
   images: {

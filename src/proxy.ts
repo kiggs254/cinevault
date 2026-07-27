@@ -19,7 +19,7 @@ async function isAuthed(token: string | undefined): Promise<boolean> {
   }
 }
 
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
   if (PUBLIC_API.some((p) => pathname.startsWith(p))) return NextResponse.next();
