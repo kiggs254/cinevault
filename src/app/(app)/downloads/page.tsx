@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, ChevronDown, RotateCw, Trash2, Film, DownloadCloud } from "lucide-react";
+import { Download, ChevronDown, RotateCw, Trash2, Film, DownloadCloud, Shuffle, Loader2 } from "lucide-react";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { DownloadRow } from "@/components/downloads-panel";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -86,14 +86,18 @@ function EpisodeRow({
   d,
   onRetry,
   onRemove,
+  onResource,
 }: {
   d: DownloadDTO;
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
+  onResource?: (id: string) => Promise<string> | void;
 }) {
   const m = statusMeta(d.status);
   const active = isActiveStatus(d.status);
   const failed = d.status === "FAILED" || d.status === "CANCELLED";
+  const canResource = d.status !== "COMPLETED" && d.status !== "UPLOADING";
+  const [resourcing, setResourcing] = useState(false);
   const confirm = useConfirm();
   return (
     <div className="flex items-start gap-3">
@@ -131,6 +135,23 @@ function EpisodeRow({
           {m.label}
         </span>
       )}
+      {canResource && onResource && (
+        <button
+          className="btn btn-ghost mt-0.5 flex-none px-2 py-1"
+          title="Switch to a fresh source"
+          disabled={resourcing}
+          onClick={async () => {
+            setResourcing(true);
+            try {
+              await onResource(d.id);
+            } finally {
+              setResourcing(false);
+            }
+          }}
+        >
+          {resourcing ? <Loader2 size={13} className="animate-spin" /> : <Shuffle size={13} />}
+        </button>
+      )}
       {(d.status === "FAILED" || d.status === "CANCELLED") && (
         <button className="btn btn-ghost flex-none px-2 py-1" title="Retry" onClick={() => onRetry(d.id)}>
           <RotateCw size={13} />
@@ -164,6 +185,7 @@ function GroupCard({
   items,
   onRetry,
   onRemove,
+  onResource,
 }: {
   title: string;
   season: number;
@@ -171,6 +193,7 @@ function GroupCard({
   items: DownloadDTO[];
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
+  onResource?: (id: string) => Promise<string> | void;
 }) {
   const [open, setOpen] = useState(false);
   const eps = useMemo(
@@ -235,7 +258,7 @@ function GroupCard({
             </button>
           )}
           {eps.map((e) => (
-            <EpisodeRow key={e.id} d={e} onRetry={onRetry} onRemove={onRemove} />
+            <EpisodeRow key={e.id} d={e} onRetry={onRetry} onRemove={onRemove} onResource={onResource} />
           ))}
         </div>
       )}
@@ -244,7 +267,7 @@ function GroupCard({
 }
 
 export default function DownloadsPage() {
-  const { downloads, loaded, retry, remove, refetch } = useDownloadsCtx();
+  const { downloads, loaded, retry, remove, resource } = useDownloadsCtx();
   const [filter, setFilter] = useState<Filter>("all");
   const [page, setPage] = useState(1);
 
@@ -316,9 +339,10 @@ export default function DownloadsPage() {
                 items={u.items}
                 onRetry={retry}
                 onRemove={remove}
+                onResource={resource}
               />
             ) : (
-              <DownloadRow key={u.key} d={u.item} onRetry={retry} onRemove={remove} onRefresh={refetch} />
+              <DownloadRow key={u.key} d={u.item} onRetry={retry} onRemove={remove} onResource={resource} />
             ),
           )}
         </div>

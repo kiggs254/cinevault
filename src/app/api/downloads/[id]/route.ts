@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDownload, removeDownload, retryDownload } from "@/lib/service/downloads";
+import { getDownload, removeDownload, retryDownload, resourceDownload } from "@/lib/service/downloads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +20,10 @@ export async function POST(req: Request, { params }: Ctx) {
     const download = await retryDownload(id);
     if (!download) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ download });
+  }
+  if (body.action === "resource") {
+    const r = await resourceDownload(id);
+    return NextResponse.json(r);
   }
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }

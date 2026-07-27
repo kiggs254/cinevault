@@ -100,5 +100,24 @@ export function useDownloads() {
     [refetch],
   );
 
-  return { downloads, activity, connected, loaded, refetch, remove, retry };
+  /** Swap a download to a fresh source now; returns a status message. */
+  const resource = useCallback(
+    async (id: string): Promise<string> => {
+      try {
+        const res = await fetch(`/api/downloads/${id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "resource" }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { message?: string };
+        await refetch();
+        return data.message ?? "Switching source…";
+      } catch {
+        return "Couldn't switch source";
+      }
+    },
+    [refetch],
+  );
+
+  return { downloads, activity, connected, loaded, refetch, remove, retry, resource };
 }

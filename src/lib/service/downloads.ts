@@ -720,6 +720,83 @@ export async function recordDownloadFailure(id: string): Promise<void> {
   await recordFailedSources(row.tmdbId, row.season, row.episode, failureEntries(row));
 }
 
+/**
+ * Manually swap a download to a fresh source right now (e.g. it's crawling). Marks
+ * the current release bad, then queues the best untried alternative on the same row.
+ */
+export async function resourceDownload(id: string): Promise<{ ok: boolean; message: string }> {
+  const dl = await prisma.download.findUnique({ where: { id } });
+  if (!dl) return { ok: false, message: "Not found" };
+  if (dl.status === "COMPLETED") return { ok: false, message: "Already downloaded" };
+  const cfg = await getConfig();
+  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { ok: false, message: "Prowlarr not configured" };
+
+  // The current source is the problem — remember it as bad and exclude it + history.
+  await recordFailedSources(dl.tmdbId, dl.season, dl.episode, failureEntries(dl));
+  const failed = await failedSourcesFor(dl.tmdbId, dl.season, dl.episode);
+  const triedH = new Set<string>([
+    ...[...triedHashesFromMeta(dl.metadata), dl.infoHash].filter((h): h is string => !!h).map((h) => h.toLowerCase()),
+    ...failed.hashes,
+  ]);
+  const triedN = new Set<string>([
+    ...[...triedReleasesFromMeta(dl.metadata), dl.releaseName].filter((n): n is string => !!n).map(normRelease),
+    ...failed.names,
+  ]);
+
+  const isEp = dl.kind === "TV" && dl.season != null && dl.episode != null;
+  const q =
+    dl.query ||
+    (isEp
+      ? `${dl.title} S${pad2(dl.season!)}E${pad2(dl.episode!)}`
+      : `${dl.title}${dl.year ? ` ${dl.year}` : ""}`);
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const results = await prowlarr.search(q, { categories: categoriesForKind(dl.kind as MediaKind), limit: 100 });
+  const matched = isEp
+    ? results.filter((r) => isEpisodeMatch(r.title, dl.season!, dl.episode!) && releaseTitleMatches(r.title, dl.title))
+    : results;
+  const fresh = matched.filter(
+    (r) => !triedH.has((r.infoHash ?? "").toLowerCase()) && !triedN.has(normRelease(r.title)),
+  );
+  const floorGB = isEp ? 0.05 : dl.season != null ? 0.3 : 0.2;
+  const best = pickAutoRelease(fresh, { minSeeders: cfg.prefs.minSeeders, floorGB });
+  if (!best) return { ok: false, message: "No other source available right now" };
+
+  if (dl.qbitHash && cfg.qbit.url) {
+    await new QbClient(cfg.qbit).delete([dl.qbitHash], true).catch(() => {});
+  }
+  const source = best.magnetUrl ?? best.downloadUrl ?? "";
+  const newHash = (
+    best.infoHash ?? (source.startsWith("magnet:") ? parseInfoHash(source) : undefined)
+  )?.toLowerCase();
+  await prisma.download.update({
+    where: { id },
+    data: {
+      status: "QUEUED",
+      progress: 0,
+      error: null,
+      qbitHash: null,
+      releaseName: best.title,
+      magnet: source,
+      infoHash: newHash ?? null,
+      indexer: best.indexer ?? null,
+      seeders: best.seeders ?? null,
+      sizeBytes: BigInt(Math.max(0, Math.round(best.size ?? 0))),
+      metadata: {
+        triedInfoHashes: [...triedH, ...(newHash ? [newHash] : [])],
+        triedReleases: [...triedN, normRelease(best.title)],
+        resourceAttempts: 0,
+      },
+    },
+  });
+  await enqueueDownload(id);
+  await publishProgress({ type: "status", downloadId: id, status: "QUEUED" });
+  void logActivity(
+    `Switched source — ${dl.title}${isEp ? ` S${pad2(dl.season!)}E${pad2(dl.episode!)}` : ""} → ${best.seeders ?? 0} seeders`,
+    { kind: "switch", title: dl.title },
+  );
+  return { ok: true, message: `Switched to a fresh source (${best.seeders ?? 0} seeders)` };
+}
+
 const RETRY_STUCK_MS = 20 * 60 * 1000; // a download barely-started this long is stuck
 const RETRY_RESET_MS = 3 * 60 * 60 * 1000; // after this, re-try even already-tried sources
 

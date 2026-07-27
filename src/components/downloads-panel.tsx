@@ -15,10 +15,7 @@ import {
   DownloadCloud,
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/util";
-import { jsonFetch } from "@/lib/client";
 import { useConfirm } from "@/components/confirm-dialog";
-import { OptionsList, type ChatOption } from "./options-list";
-import type { SearchResult } from "./result-card";
 import type { DownloadDTO, DownloadStatus } from "@/lib/types";
 
 function fmtDateTime(iso: string): string {
@@ -75,95 +72,33 @@ export function DownloadRow({
   d,
   onRetry,
   onRemove,
-  onRefresh,
+  onResource,
 }: {
   d: DownloadDTO;
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
-  onRefresh: () => void;
+  onResource?: (id: string) => Promise<string> | void;
 }) {
   const m = meta(d.status);
   const active = isActive(d.status);
   const uploading = d.status === "UPLOADING";
 
   const [expanded, setExpanded] = useState(false);
-  const [alts, setAlts] = useState<SearchResult[] | null>(null);
-  const [loadingAlts, setLoadingAlts] = useState(false);
-  const [pickId, setPickId] = useState<string | null>(null);
-  const [err, setErr] = useState("");
+  const [resourcing, setResourcing] = useState(false);
+  const [note, setNote] = useState("");
   const confirm = useConfirm();
 
-  async function findAlternatives() {
-    if (alts) {
-      setAlts(null);
-      return;
-    }
-    setLoadingAlts(true);
-    setErr("");
+  async function switchSource() {
+    if (!onResource) return;
+    setResourcing(true);
+    setNote("");
     try {
-      const res = await jsonFetch<{ results: SearchResult[] }>("/api/search", {
-        method: "POST",
-        body: JSON.stringify({ query: d.title }),
-      });
-      const filtered = res.results
-        .filter((r) => r.title !== d.releaseName && (r.magnetUrl || r.downloadUrl))
-        .slice(0, 6);
-      setAlts(filtered);
-      if (filtered.length === 0) setErr("No alternative sources found.");
-    } catch (e) {
-      setErr((e as Error).message);
+      const msg = await onResource(d.id);
+      if (typeof msg === "string") setNote(msg);
     } finally {
-      setLoadingAlts(false);
+      setResourcing(false);
     }
   }
-
-  async function pickAlt(o: ChatOption) {
-    const r = o.payload as SearchResult;
-    setPickId(o.id);
-    setErr("");
-    try {
-      await jsonFetch("/api/download", {
-        method: "POST",
-        body: JSON.stringify({
-          title: r.title,
-          magnetUrl: r.magnetUrl,
-          downloadUrl: r.downloadUrl,
-          infoHash: r.infoHash,
-          indexer: r.indexer,
-          size: r.size,
-          seeders: r.seeders,
-          query: d.title,
-          plan: {
-            kind: d.kind,
-            title: d.title,
-            year: d.year,
-            season: d.season,
-            episode: d.episode,
-          },
-        }),
-      });
-      await onRemove(d.id); // remove the stuck one
-      onRefresh();
-    } catch (e) {
-      setErr((e as Error).message);
-      setPickId(null);
-    }
-  }
-
-  const altOptions: ChatOption[] = (alts ?? []).map((r, i) => ({
-    id: String(i),
-    label: r.title,
-    meta: [
-      r.parsed.resolution,
-      r.parsed.source,
-      `${r.seeders} seeders`,
-      `${(r.size / 1024 ** 3).toFixed(2)} GB`,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-    recommended: i === 0,
-    payload: r,
-  }));
 
   return (
     <div className="card rise p-4">
@@ -248,7 +183,7 @@ export function DownloadRow({
             {d.status === "FAILED" && d.error && !expanded && (
               <p className="mt-2 truncate text-xs text-danger">{d.error}</p>
             )}
-            {err && <p className="mt-2 text-xs text-danger">{err}</p>}
+            {note && <p className="mt-2 text-xs text-muted">{note}</p>}
           </div>
 
           <ChevronDown
@@ -263,13 +198,14 @@ export function DownloadRow({
               <RotateCw size={14} />
             </button>
           )}
-          {canReplace(d.status) && (
+          {canReplace(d.status) && onResource && (
             <button
               className="btn btn-ghost px-2.5 py-1.5"
-              title="Replace with a different source"
-              onClick={findAlternatives}
+              title="Switch to a fresh source"
+              disabled={resourcing}
+              onClick={switchSource}
             >
-              {loadingAlts ? <Loader2 size={14} className="animate-spin" /> : <Shuffle size={14} />}
+              {resourcing ? <Loader2 size={14} className="animate-spin" /> : <Shuffle size={14} />}
             </button>
           )}
           <button
@@ -318,13 +254,6 @@ export function DownloadRow({
           {d.error && <Detail label="Error" value={<span className="text-danger">{d.error}</span>} />}
         </div>
       )}
-
-      {alts && alts.length > 0 && (
-        <div className="mt-3">
-          <p className="label mb-2">Pick a different source (removes the current one)</p>
-          <OptionsList options={altOptions} busyId={pickId} onSelect={pickAlt} />
-        </div>
-      )}
     </div>
   );
 }
@@ -359,7 +288,7 @@ export function DownloadsPanel({
         ) : (
           <div className="grid gap-3">
             {active.map((d) => (
-              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
+              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} />
             ))}
           </div>
         )}
@@ -373,7 +302,7 @@ export function DownloadsPanel({
           </div>
           <div className="grid gap-3">
             {rest.map((d) => (
-              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} onRefresh={onRefresh} />
+              <DownloadRow key={d.id} d={d} onRetry={onRetry} onRemove={onRemove} />
             ))}
           </div>
         </div>
