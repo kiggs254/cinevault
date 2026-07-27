@@ -442,7 +442,10 @@ async function processDownload(id: string): Promise<void> {
     organized.season != null
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
       : "";
-  await notify(`✅ Download complete: ${organized.cleanTitle}${seLabel}`);
+  await notify(`✅ Downloaded\n${organized.cleanTitle}${seLabel}`, {
+    photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
+    buttons: [{ text: "▶️ Open in Cinevault", path: "/library" }],
+  });
   void logActivity(`✓ ${organized.cleanTitle}${seLabel} added to your library`, {
     kind: "done",
     title: organized.cleanTitle,
@@ -559,7 +562,9 @@ const grabWorker = new Worker<DownloadJobData>(
         console.log(`[grab] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
         if (r.queued > 0) {
           const what = r.mode === "pack" ? "the season pack" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
-          await notify(`📥 ${g.title} — Season ${g.season}: queued ${what}.`);
+          await notify(`📥 ${g.title} — Season ${g.season}: queued ${what}.`, {
+            buttons: [{ text: "📥 View downloads", path: "/downloads" }],
+          });
         }
       } catch (e) {
         console.error(`[grab] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);

@@ -39,24 +39,73 @@ export async function tgApi<T = any>(
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+interface UrlButton {
+  text: string;
+  url: string;
+}
+
+/** Build a single-row inline keyboard, dropping localhost/relative URLs. */
+function keyboard(buttons?: UrlButton[]): Record<string, unknown> | undefined {
+  const valid = (buttons ?? []).filter(
+    (b) => /^https?:\/\//i.test(b.url) && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(b.url),
+  );
+  return valid.length ? { inline_keyboard: [valid.map((b) => ({ text: b.text, url: b.url }))] } : undefined;
+}
+
 export async function sendMessage(
   token: string,
   chatId: string | number,
   text: string,
+  buttons?: UrlButton[],
 ): Promise<void> {
   await tgApi(token, "sendMessage", {
     chat_id: chatId,
     text: text.slice(0, 4000),
     disable_web_page_preview: true,
+    reply_markup: keyboard(buttons),
   });
 }
 
-/** Fire-and-forget push to the configured chat. Safe to call from anywhere. */
-export async function notify(text: string): Promise<void> {
+/** Send a poster photo with a caption + optional CTA buttons; falls back to text. */
+export async function sendPhoto(
+  token: string,
+  chatId: string | number,
+  photo: string,
+  caption: string,
+  buttons?: UrlButton[],
+): Promise<void> {
+  const ok = await tgApi(token, "sendPhoto", {
+    chat_id: chatId,
+    photo,
+    caption: caption.slice(0, 1000),
+    reply_markup: keyboard(buttons),
+  });
+  if (!ok) await sendMessage(token, chatId, caption, buttons); // photo URL rejected → text
+}
+
+export interface NotifyButton {
+  text: string;
+  path: string; // relative to the app's public URL (e.g. "/downloads")
+}
+
+/**
+ * Fire-and-forget push to the configured chat. Optionally attaches a poster and
+ * CTA buttons (built from the app's public URL; skipped if that's localhost).
+ */
+export async function notify(
+  text: string,
+  opts?: { photo?: string | null; buttons?: NotifyButton[] },
+): Promise<void> {
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;
-    await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, text);
+    const base = (cfg.appUrl ?? "").replace(/\/$/, "");
+    const buttons: UrlButton[] = (opts?.buttons ?? []).map((b) => ({ text: b.text, url: `${base}${b.path}` }));
+    if (opts?.photo) {
+      await sendPhoto(cfg.telegram.botToken, cfg.telegram.chatId, opts.photo, text, buttons);
+    } else {
+      await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, text, buttons);
+    }
   } catch {
     /* best-effort */
   }

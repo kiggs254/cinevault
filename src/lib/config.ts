@@ -38,6 +38,7 @@ export interface ResolvedConfig {
   };
   jellyfin: { url?: string; apiKey?: string; userId?: string };
   telegram: { botToken?: string; chatId?: string };
+  appUrl: string; // public base URL of this app (for deep-link CTAs)
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
   tasteProfile: TasteProfile | null;
@@ -148,6 +149,7 @@ export async function getConfig(): Promise<ResolvedConfig> {
       botToken: dec("telegramBotToken") ?? env.TELEGRAM_BOT_TOKEN,
       chatId: str(settings.telegramChatId) ?? env.TELEGRAM_CHAT_ID,
     },
+    appUrl: str(settings.appUrl) ?? env.APP_URL,
     retention: {
       autoDeleteWatched: settings.autoDeleteWatched === true,
       days: num(settings.retentionDays, 30),

@@ -402,8 +402,17 @@ export async function grabEpisode(o: {
   });
   void logActivity(`Queued ${label}`, { kind: "queue", title: show.title });
   if (o.notify !== false) {
+    let photo: string | undefined;
+    try {
+      if (cfg.tmdb.apiKey) {
+        photo = (await cachedTitleMeta(cfg.tmdb.apiKey, "TV", show.tmdbId)).posterUrl ?? undefined;
+      }
+    } catch {
+      /* poster optional */
+    }
     await notify(
-      `⬇️ New episode: ${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` — ${ep.name}` : ""} → downloading.`,
+      `⬇️ New episode grabbing\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`,
+      { photo, buttons: [{ text: "📥 Downloads", path: "/downloads" }] },
     );
   }
   return true;
@@ -657,25 +666,44 @@ function triedHashesFromMeta(metadata: unknown): string[] {
     : [];
 }
 
+const RETRY_STUCK_MS = 20 * 60 * 1000; // a download barely-started this long is stuck
+
 /**
- * Re-search FAILED episodes for a fresh, better source — skipping every release we
- * already tried, and letting the scorer prefer more seeders / higher quality (so a
- * dead 720p is replaced by a well-seeded 1080p when one exists). Reuses the failed
- * row via createDownload's dedup, so it never creates duplicates. Periodic job.
+ * Re-search episodes that need a fresh source — both FAILED ones and downloads
+ * that have sat at ~0% for 20 min (dead magnet / no metadata). Skips every release
+ * already tried and lets the scorer prefer more seeders / higher quality (so a dead
+ * 720p is replaced by a well-seeded 1080p when one exists). Reuses the row via
+ * createDownload's dedup, so it never creates duplicates. Periodic job.
  */
 export async function retryFailed(): Promise<{ retried: number }> {
   const cfg = await getConfig();
   if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey || !cfg.tmdb.apiKey) return { retried: 0 };
-  const failed = await prisma.download.findMany({
-    where: { status: "FAILED", kind: "TV", season: { not: null }, episode: { not: null } },
+  const stuckCutoff = new Date(Date.now() - RETRY_STUCK_MS);
+  const candidates = await prisma.download.findMany({
+    where: {
+      kind: "TV",
+      season: { not: null },
+      episode: { not: null },
+      OR: [
+        { status: "FAILED" },
+        // Downloading but stuck at ~0% with a stale heartbeat (poll loop gone / dead source).
+        { status: "DOWNLOADING", progress: { lt: 1 }, updatedAt: { lt: stuckCutoff } },
+      ],
+    },
     orderBy: { updatedAt: "asc" },
-    take: 15,
+    take: 20,
   });
-  if (failed.length === 0) return { retried: 0 };
+  if (candidates.length === 0) return { retried: 0 };
+
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const qb = cfg.qbit.url ? new QbClient(cfg.qbit) : null;
+  const seen = new Set<string>();
   let retried = 0;
-  for (const dl of failed) {
+
+  for (const dl of candidates) {
     if (dl.season == null || dl.episode == null) continue;
+    const epKey = `${dl.tmdbId ?? dl.title.toLowerCase()}|${dl.season}x${dl.episode}`;
+    if (seen.has(epKey)) continue;
     // Skip if a live/completed copy already covers this episode.
     const covered = await prisma.download.findFirst({
       where: {
@@ -689,7 +717,12 @@ export async function retryFailed(): Promise<{ retried: number }> {
         ],
       },
     });
-    if (covered) continue;
+    if (covered) {
+      seen.add(epKey);
+      continue;
+    }
+    seen.add(epKey);
+
     const tried = new Set(
       [...triedHashesFromMeta(dl.metadata), dl.infoHash]
         .filter((h): h is string => !!h)
@@ -705,8 +738,20 @@ export async function retryFailed(): Promise<{ retried: number }> {
     );
     const best = pickAutoRelease(fresh, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
     if (!best) continue;
+
+    const wasStuck = dl.status === "DOWNLOADING";
+    if (wasStuck) {
+      // Drop the dead torrent and demote so createDownload's dedup revives this row.
+      if (qb && dl.qbitHash) await qb.delete([dl.qbitHash], true).catch(() => {});
+      await prisma.download
+        .update({
+          where: { id: dl.id },
+          data: { status: "FAILED", error: "No progress for 20 min — searching a fresh source" },
+        })
+        .catch(() => {});
+    }
     void logActivity(
-      `Re-searching ${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)} — new source (${best.seeders ?? 0} seeders)`,
+      `Re-searching ${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)} — ${wasStuck ? "stuck download" : "failed"}, new source (${best.seeders ?? 0} seeders)`,
       { kind: "switch", title: dl.title },
     );
     await createDownload({
