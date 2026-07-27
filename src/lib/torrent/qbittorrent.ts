@@ -269,6 +269,19 @@ export class QbClient {
     });
   }
 
+  /** Merge partial app preferences (e.g. disable queueing). Best-effort. */
+  async setPreferences(prefs: Record<string, unknown>): Promise<void> {
+    await this.ensureAuth();
+    const body = new URLSearchParams({ json: JSON.stringify(prefs) });
+    await fetch(`${this.base}/api/v2/app/setPreferences`, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/x-www-form-urlencoded" }),
+      body,
+    }).catch(() => {
+      /* best-effort */
+    });
+  }
+
   async version(): Promise<string> {
     await this.ensureAuth();
     const res = await fetch(`${this.base}/api/v2/app/version`, {
@@ -331,4 +344,25 @@ export class QbClient {
 export function parseInfoHash(magnet: string): string | undefined {
   const m = magnet.match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
   return m ? m[1].toLowerCase() : undefined;
+}
+
+const HELD_STATES = new Set([
+  "queuedDL",
+  "queuedUP",
+  "checkingDL",
+  "checkingUP",
+  "checkingResumeData",
+  "queuedForChecking",
+  "allocating",
+  "moving",
+]);
+
+/**
+ * True while qBittorrent itself is holding the torrent — its download queue, hash
+ * checks, or disk allocation/move — rather than actively trying to reach peers. A
+ * held torrent has dlspeed 0 through no fault of the source, so it must NOT count
+ * toward a "no progress" stall.
+ */
+export function isHeldByQbittorrent(info: QbTorrentInfo): boolean {
+  return HELD_STATES.has(info.state);
 }

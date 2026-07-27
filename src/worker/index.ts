@@ -11,7 +11,7 @@ import { startTelegramBot } from "../lib/telegram/bot";
 import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
-import { QbClient, parseInfoHash, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
+import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
 import { reSource, grabSeason, recoverStuckDownloads, runEpisodeGrab } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
@@ -181,10 +181,11 @@ async function pollUntilComplete(
 
     if (isComplete(info)) return info;
 
-    // Reset on ANY movement (speed or progress); trip only when nothing is
-    // moving for STALL_MS. A slow-but-steady download keeps dlspeed > 0 and is
-    // never swapped, regardless of seeder count.
-    if (info.dlspeed > 0 || pct > lastProgress + 0.01) {
+    // Reset on ANY movement (speed or progress), OR while qBittorrent is holding
+    // the torrent in its own queue / hash-check (dlspeed 0 through no fault of the
+    // source). Trip only when it should be downloading but nothing moves for
+    // STALL_MS — a slow-but-steady download keeps dlspeed > 0 and is never swapped.
+    if (info.dlspeed > 0 || pct > lastProgress + 0.01 || isHeldByQbittorrent(info)) {
       lastProgress = pct;
       stalledSince = Date.now();
     } else if (Date.now() - stalledSince > STALL_MS) {
@@ -550,8 +551,28 @@ async function recoverInterrupted(): Promise<void> {
   }
 }
 
+/**
+ * Disable qBittorrent's own download queue so it downloads everything we add — the
+ * worker (DOWNLOAD_CONCURRENCY) is the single limiter. Otherwise qBit parks extra
+ * torrents as "queued" (0 speed), which the stall detector would mistake for dead
+ * sources and fail — the cause of a big overnight batch all failing.
+ */
+async function configureQbittorrent(): Promise<void> {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.qbit.url) return;
+    const qb = new QbClient(cfg.qbit);
+    await qb.ensureCategory(CATEGORY);
+    await qb.setPreferences({ queueing_enabled: false });
+    console.log("[worker] qBittorrent queueing disabled (worker manages concurrency)");
+  } catch (e) {
+    console.error("[worker] qBittorrent prefs setup failed:", (e as Error).message);
+  }
+}
+
 worker.on("ready", () => {
   console.log(`[worker] ready — downloads×${DOWNLOAD_CONCURRENCY}, grabs×${GRAB_CONCURRENCY}`);
+  void configureQbittorrent();
   void recoverInterrupted();
   void schedulePeriodicJobs()
     .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))
