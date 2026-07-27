@@ -19,6 +19,7 @@ import {
   recoverStuckDownloads,
   runEpisodeGrab,
   retryFailed,
+  recordDownloadFailure,
 } from "../lib/service/downloads";
 import { makeS3, uploadContent } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
@@ -536,6 +537,8 @@ const worker = new Worker<DownloadJobData>(
         .update({ where: { id: downloadId }, data: { status: "FAILED", error: message } })
         .catch(() => {});
       await publishProgress({ type: "status", downloadId, status: "FAILED", message });
+      // Remember this source failed so no future grab re-picks it (survives deletion).
+      await recordDownloadFailure(downloadId).catch(() => {});
       // Remove the dead torrent from qBittorrent so its state matches the app.
       try {
         const row = await prisma.download.findUnique({

@@ -15,6 +15,13 @@ import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
 import type { Download } from "@prisma/client";
 import { enqueueDownload, enqueueEpisodeGrab } from "../queue";
+import {
+  failedSourcesFor,
+  recordFailedSources,
+  clearFailedSources,
+  excludeFailed,
+  normRelease,
+} from "./failed-sources";
 import { publishProgress } from "../events";
 import { logActivity } from "../activity";
 import { toDTO } from "../serialize";
@@ -292,7 +299,11 @@ export async function grabMovie(opts: {
   const q = `${opts.title}${opts.year ? ` ${opts.year}` : ""}`;
   void logActivity(`Searching sources for “${opts.title}”…`, { kind: "search", title: opts.title });
   const results = await prowlarr.search(q, { categories: categoriesForKind("MOVIE"), limit: 60 });
-  const chosen = pickAutoRelease(results, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.2 });
+  const failed = await failedSourcesFor(opts.tmdbId, null, null);
+  const chosen = pickAutoRelease(excludeFailed(results, failed), {
+    minSeeders: cfg.prefs.minSeeders,
+    floorGB: 0.2,
+  });
   if (!chosen) {
     void logActivity(`No good source found for “${opts.title}”.`, { kind: "warn", title: opts.title });
     return null;
@@ -395,7 +406,11 @@ export async function grabEpisode(o: {
       isEpisodeMatch(r.title, ep.seasonNumber, ep.episodeNumber) &&
       releaseTitleMatches(r.title, show.title),
   );
-  const best = pickAutoRelease(matched, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+  const failed = await failedSourcesFor(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
+  const best = pickAutoRelease(excludeFailed(matched, failed), {
+    minSeeders: cfg.prefs.minSeeders,
+    floorGB: 0.05,
+  });
   if (!best) {
     void logActivity(`No source yet — ${label}`, { kind: "warn", title: show.title });
     return false;
@@ -658,6 +673,11 @@ export async function removeDownload(id: string): Promise<void> {
   const row = await prisma.download.findUnique({ where: { id } });
   if (!row) return;
   const cfg = await getConfig();
+  // Removing a download that never finished → remember its source(s) as bad so a
+  // fresh re-grab won't pick the same dead release again.
+  if (row.status !== "COMPLETED") {
+    await recordFailedSources(row.tmdbId, row.season, row.episode, failureEntries(row));
+  }
   if (row.qbitHash) {
     try {
       const qb = new QbClient(cfg.qbit);
@@ -685,9 +705,19 @@ function triedReleasesFromMeta(metadata: unknown): string[] {
   const v = metaRecord(metadata).triedReleases;
   return Array.isArray(v) ? (v as unknown[]).filter((h): h is string => typeof h === "string") : [];
 }
-/** Collapse a release name to a comparable key (case/punctuation-insensitive). */
-function normRelease(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+/** Every source a download attempted (its current release + prior tried history). */
+function failureEntries(row: Download): { releaseName?: string | null; infoHash?: string | null }[] {
+  return [
+    { releaseName: row.releaseName, infoHash: row.infoHash },
+    ...triedReleasesFromMeta(row.metadata).map((n) => ({ releaseName: n })),
+    ...triedHashesFromMeta(row.metadata).map((h) => ({ infoHash: h })),
+  ];
+}
+/** Persist a failed download's source(s) so future grabs skip them (survives row deletion). */
+export async function recordDownloadFailure(id: string): Promise<void> {
+  const row = await prisma.download.findUnique({ where: { id } });
+  if (!row) return;
+  await recordFailedSources(row.tmdbId, row.season, row.episode, failureEntries(row));
 }
 
 const RETRY_STUCK_MS = 20 * 60 * 1000; // a download barely-started this long is stuck
@@ -748,16 +778,19 @@ export async function retryFailed(): Promise<{ retried: number }> {
     }
     seen.add(epKey);
 
-    const triedHashes = new Set(
-      [...triedHashesFromMeta(dl.metadata), dl.infoHash]
+    const failedStore = await failedSourcesFor(dl.tmdbId, dl.season, dl.episode);
+    const triedHashes = new Set([
+      ...[...triedHashesFromMeta(dl.metadata), dl.infoHash]
         .filter((h): h is string => !!h)
         .map((h) => h.toLowerCase()),
-    );
-    const triedNames = new Set(
-      [...triedReleasesFromMeta(dl.metadata), dl.releaseName]
+      ...failedStore.hashes,
+    ]);
+    const triedNames = new Set([
+      ...[...triedReleasesFromMeta(dl.metadata), dl.releaseName]
         .filter((n): n is string => !!n)
         .map(normRelease),
-    );
+      ...failedStore.names,
+    ]);
     const q = `${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)}`;
     const results = await prowlarr.search(q, { categories: categoriesForKind("TV"), limit: 100 });
     const matched = results.filter(
@@ -780,6 +813,7 @@ export async function retryFailed(): Promise<{ retried: number }> {
 
     const wasStuck = dl.status === "DOWNLOADING";
     if (wasStuck && qb && dl.qbitHash) await qb.delete([dl.qbitHash], true).catch(() => {});
+    if (reset) await clearFailedSources(dl.tmdbId, dl.season, dl.episode);
     if (wasStuck || reset) {
       await prisma.download
         .update({
