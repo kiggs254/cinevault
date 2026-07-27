@@ -93,29 +93,41 @@ function EpisodeRow({
 }) {
   const m = statusMeta(d.status);
   const active = isActiveStatus(d.status);
+  const failed = d.status === "FAILED" || d.status === "CANCELLED";
   const confirm = useConfirm();
   return (
-    <div className="flex items-center gap-3">
-      <span className="mono w-14 flex-none text-xs text-muted">
+    <div className="flex items-start gap-3">
+      <span className="mono mt-0.5 w-14 flex-none text-xs text-muted">
         S{pad(d.season)}E{pad(d.episode)}
       </span>
       <div className="min-w-0 flex-1">
         {active ? (
-          <div className="track">
+          <div className="mt-1.5 track">
             <div className="track-fill active" style={{ width: `${Math.max(2, d.progress)}%` }} />
           </div>
         ) : (
-          <span className="block truncate text-xs text-faint" title={d.releaseName}>
-            {d.releaseName}
-          </span>
+          <>
+            <span className="block truncate text-xs text-faint" title={d.releaseName}>
+              {d.releaseName}
+            </span>
+            {failed && d.error && (
+              <span className="mt-0.5 block truncate text-[11px] text-danger" title={d.error}>
+                {d.error}
+              </span>
+            )}
+          </>
         )}
       </div>
       {d.status === "COMPLETED" ? (
-        <span className="flex-none text-success" title="Downloaded">
+        <span className="mt-0.5 flex-none text-success" title="Downloaded">
           <DownloadCloud size={15} />
         </span>
       ) : (
-        <span className="badge flex-none" style={{ color: m.color, borderColor: `${m.color}55` }}>
+        <span
+          className="badge mt-0.5 flex-none"
+          style={{ color: m.color, borderColor: `${m.color}55` }}
+          title={failed ? d.error ?? undefined : undefined}
+        >
           {m.label}
         </span>
       )}
@@ -210,6 +222,18 @@ function GroupCard({
 
       {open && (
         <div className="mt-3 space-y-2 border-t border-border pt-3">
+          {failed > 0 && (
+            <button
+              className="btn btn-ghost mb-1 w-full text-xs"
+              onClick={() =>
+                eps
+                  .filter((e) => e.status === "FAILED" || e.status === "CANCELLED")
+                  .forEach((e) => onRetry(e.id))
+              }
+            >
+              <RotateCw size={13} /> Retry {failed} failed
+            </button>
+          )}
           {eps.map((e) => (
             <EpisodeRow key={e.id} d={e} onRetry={onRetry} onRemove={onRemove} />
           ))}

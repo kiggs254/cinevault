@@ -221,7 +221,12 @@ async function downloadWithReSource(
     } catch (e) {
       if (!(e instanceof StalledError)) throw e;
       const next = await handleStall(qb, id, current, cfg);
-      if (next === "gave-up") throw e; // fail with the stall reason
+      if (next === "gave-up") {
+        // Exhausted source swaps — say so plainly (usually means no seeders).
+        throw new Error(
+          `No working source — every release stalled (likely no seeders). Last: ${e.message}`,
+        );
+      }
       if (next === "superseded") {
         // Another worker (restart-recovery) already swapped — reload and continue.
         const dl = await prisma.download.findUnique({ where: { id }, select: { qbitHash: true } });
