@@ -125,21 +125,57 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
   }
   const title = (input.title && input.title.trim()) || cleanReleaseName(input.releaseName);
 
-  // Don't create a second row for a TV episode we already have — guards against
-  // duplicate episodes from repeated/concurrent season grabs or double-taps.
+  // Keep exactly one row per TV episode. Repeated/concurrent grabs, follow-scans
+  // and re-runs must not pile up duplicates — the previous guard only blocked a
+  // second row when a live one existed, so a FAILED episode accumulated a new row
+  // on every re-grab. Now: reuse the live row if any, else revive the newest
+  // failed attempt in place, and drop the leftover failed duplicates.
   if (input.kind === "TV" && input.season != null && input.episode != null) {
-    const dup = await prisma.download.findFirst({
+    const rows = await prisma.download.findMany({
       where: {
         season: input.season,
         episode: input.episode,
-        status: { notIn: ["FAILED", "CANCELLED"] },
         OR: [
           ...(input.tmdbId ? [{ tmdbId: input.tmdbId }] : []),
           { title: { equals: title, mode: "insensitive" as const } },
         ],
       },
+      orderBy: { createdAt: "desc" },
     });
-    if (dup) return toDTO(dup);
+    if (rows.length) {
+      const alive = rows.find((r) => r.status !== "FAILED" && r.status !== "CANCELLED");
+      const keepId = alive?.id ?? rows[0].id;
+      const stale = rows.filter((r) => r.id !== keepId).map((r) => r.id);
+      if (stale.length) await prisma.download.deleteMany({ where: { id: { in: stale } } });
+
+      if (alive) {
+        if (stale.length) await publishProgress({ type: "deleted", downloadId: stale[0] });
+        return toDTO(alive);
+      }
+      // Only failed attempts exist → revive the newest with the new source.
+      const revived = await prisma.download.update({
+        where: { id: keepId },
+        data: {
+          status: "QUEUED",
+          error: null,
+          progress: 0,
+          qbitHash: null,
+          releaseName: input.releaseName,
+          magnet: input.source,
+          infoHash:
+            input.infoHash ??
+            (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined) ??
+            null,
+          indexer: input.indexer ?? null,
+          seeders: input.seeders ?? null,
+          sizeBytes: BigInt(Math.max(0, Math.round(input.size ?? 0))),
+          metadata: {}, // reset tried-hashes / re-source attempts for a clean retry
+        },
+      });
+      await enqueueDownload(revived.id);
+      await publishProgress({ type: "created", downloadId: revived.id, status: "QUEUED" });
+      return toDTO(revived);
+    }
   }
 
   // Grab poster + overview up front (cached) so they appear while downloading,
