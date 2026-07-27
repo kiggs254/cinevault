@@ -328,9 +328,9 @@ export default function DiscoverPage() {
             Not following anything yet. Search above, or shows you watch in Jellyfin get followed automatically.
           </p>
         ) : (
-          <div className="no-scrollbar flex gap-4 overflow-x-auto pb-2">
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 sm:gap-4 lg:grid-cols-6">
             {follows.map((f) => (
-              <div key={f.id} className="w-32 flex-none">
+              <div key={f.id}>
                 <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2">
                   {f.posterUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element

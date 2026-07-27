@@ -2,12 +2,33 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { followShow } from "@/lib/service/follows";
 import { enqueueJob } from "@/lib/queue";
+import { getConfig } from "@/lib/config";
+import { getTitle } from "@/lib/metadata/tmdb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const shows = await prisma.followedShow.findMany({ orderBy: { createdAt: "desc" } });
+
+  // Backfill posters for follows created without one (auto-follow / season-grab),
+  // and persist them so the grid isn't full of placeholders.
+  const key = (await getConfig()).tmdb.apiKey;
+  if (key) {
+    await Promise.all(
+      shows.map(async (s) => {
+        if (s.posterUrl || !s.tmdbId) return;
+        const t = await getTitle(key, "tv", s.tmdbId).catch(() => null);
+        if (t?.posterUrl) {
+          s.posterUrl = t.posterUrl;
+          await prisma.followedShow
+            .update({ where: { id: s.id }, data: { posterUrl: t.posterUrl } })
+            .catch(() => {});
+        }
+      }),
+    );
+  }
+
   return NextResponse.json(
     {
       shows: shows.map((s) => ({
