@@ -132,9 +132,6 @@ export function Sidebar() {
               }`}
               style={active ? { background: "var(--color-accent-soft)" } : undefined}
             >
-              {active && (
-                <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-              )}
               <Icon size={18} strokeWidth={2} />
               {label}
               {href === "/downloads" && activeCount > 0 && (
