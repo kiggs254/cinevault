@@ -39,7 +39,7 @@ const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
 const STALL_MS = 10 * 60 * 1000; // grace for a connected-but-slow torrent
 const DEAD_MS = 2 * 60 * 1000; // grace when qBittorrent reports no seeders at all
-const MAX_RESOURCE_ATTEMPTS = 3; // source swaps before giving up
+const MAX_RESOURCE_ATTEMPTS = 5; // source swaps before giving up (retry-failed keeps going after)
 
 // How many jobs the worker runs at once. Each active download holds a slot for
 // its whole download + S3 upload, so this also bounds simultaneous uploads.

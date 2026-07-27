@@ -152,17 +152,28 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
         if (stale.length) await publishProgress({ type: "deleted", downloadId: stale[0] });
         return toDTO(alive);
       }
-      // Only failed attempts exist → revive the newest with the new source.
+      // Only failed attempts exist. Revive with this source UNLESS we've already
+      // tried it and it failed — never re-download the same link. Guard on both
+      // infohash and (normalized) release name, since infohash can be absent.
+      const keptRow = rows.find((r) => r.id === keepId);
       const newHash = (
         input.infoHash ??
         (input.source.startsWith("magnet:") ? parseInfoHash(input.source) : undefined)
       )?.toLowerCase();
-      // Keep the tried-source history growing (so smart retries never reconsider a
-      // known-bad release) but reset the re-source attempt counter for a fresh run.
-      const keptRow = rows.find((r) => r.id === keepId);
-      const mergedTried = [
-        ...new Set([...triedHashesFromMeta(keptRow?.metadata), ...(newHash ? [newHash] : [])]),
+      const newName = normRelease(input.releaseName);
+      // "Tried" = the episode's failed history PLUS whatever release is on the row
+      // right now (it failed too), so even the very first re-grab can't re-pick it.
+      const prevHashes = [
+        ...triedHashesFromMeta(keptRow?.metadata),
+        ...(keptRow?.infoHash ? [keptRow.infoHash.toLowerCase()] : []),
       ];
+      const prevNames = [
+        ...triedReleasesFromMeta(keptRow?.metadata),
+        ...(keptRow?.releaseName ? [normRelease(keptRow.releaseName)] : []),
+      ];
+      if ((newHash && prevHashes.includes(newHash)) || prevNames.includes(newName)) {
+        return toDTO(keptRow ?? rows[0]); // already tried this exact release — leave for a fresh retry
+      }
       const revived = await prisma.download.update({
         where: { id: keepId },
         data: {
@@ -176,7 +187,11 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
           indexer: input.indexer ?? null,
           seeders: input.seeders ?? null,
           sizeBytes: BigInt(Math.max(0, Math.round(input.size ?? 0))),
-          metadata: { triedInfoHashes: mergedTried, resourceAttempts: 0 },
+          metadata: {
+            triedInfoHashes: [...new Set([...prevHashes, ...(newHash ? [newHash] : [])])],
+            triedReleases: [...new Set([...prevNames, newName])],
+            resourceAttempts: 0,
+          },
         },
       });
       await enqueueDownload(revived.id);
@@ -656,17 +671,27 @@ export async function removeDownload(id: string): Promise<void> {
   await publishProgress({ type: "deleted", downloadId: id });
 }
 
+function metaRecord(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+}
 function triedHashesFromMeta(metadata: unknown): string[] {
-  const m =
-    metadata && typeof metadata === "object" && !Array.isArray(metadata)
-      ? (metadata as Record<string, unknown>)
-      : {};
-  return Array.isArray(m.triedInfoHashes)
-    ? (m.triedInfoHashes as unknown[]).filter((h): h is string => typeof h === "string")
-    : [];
+  const v = metaRecord(metadata).triedInfoHashes;
+  return Array.isArray(v) ? (v as unknown[]).filter((h): h is string => typeof h === "string") : [];
+}
+/** Release names already tried (and failed) for a download, normalized. */
+function triedReleasesFromMeta(metadata: unknown): string[] {
+  const v = metaRecord(metadata).triedReleases;
+  return Array.isArray(v) ? (v as unknown[]).filter((h): h is string => typeof h === "string") : [];
+}
+/** Collapse a release name to a comparable key (case/punctuation-insensitive). */
+function normRelease(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 const RETRY_STUCK_MS = 20 * 60 * 1000; // a download barely-started this long is stuck
+const RETRY_RESET_MS = 3 * 60 * 60 * 1000; // after this, re-try even already-tried sources
 
 /**
  * Re-search episodes that need a fresh source — both FAILED ones and downloads
@@ -723,35 +748,52 @@ export async function retryFailed(): Promise<{ retried: number }> {
     }
     seen.add(epKey);
 
-    const tried = new Set(
+    const triedHashes = new Set(
       [...triedHashesFromMeta(dl.metadata), dl.infoHash]
         .filter((h): h is string => !!h)
         .map((h) => h.toLowerCase()),
     );
+    const triedNames = new Set(
+      [...triedReleasesFromMeta(dl.metadata), dl.releaseName]
+        .filter((n): n is string => !!n)
+        .map(normRelease),
+    );
     const q = `${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)}`;
     const results = await prowlarr.search(q, { categories: categoriesForKind("TV"), limit: 100 });
-    const fresh = results.filter(
-      (r) =>
-        isEpisodeMatch(r.title, dl.season!, dl.episode!) &&
-        releaseTitleMatches(r.title, dl.title) &&
-        !tried.has((r.infoHash ?? "").toLowerCase()),
+    const matched = results.filter(
+      (r) => isEpisodeMatch(r.title, dl.season!, dl.episode!) && releaseTitleMatches(r.title, dl.title),
     );
-    const best = pickAutoRelease(fresh, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+    const fresh = matched.filter(
+      (r) => !triedHashes.has((r.infoHash ?? "").toLowerCase()) && !triedNames.has(normRelease(r.title)),
+    );
+
+    // Prefer an untried release (best seeders/quality). If everything's been tried
+    // and it's been failing a while, start the cycle over — a dead source may have
+    // seeders now — by wiping this episode's tried history.
+    let best = pickAutoRelease(fresh, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+    let reset = false;
+    if (!best && matched.length > 0 && Date.now() - dl.updatedAt.getTime() > RETRY_RESET_MS) {
+      best = pickAutoRelease(matched, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
+      reset = true;
+    }
     if (!best) continue;
 
     const wasStuck = dl.status === "DOWNLOADING";
-    if (wasStuck) {
-      // Drop the dead torrent and demote so createDownload's dedup revives this row.
-      if (qb && dl.qbitHash) await qb.delete([dl.qbitHash], true).catch(() => {});
+    if (wasStuck && qb && dl.qbitHash) await qb.delete([dl.qbitHash], true).catch(() => {});
+    if (wasStuck || reset) {
       await prisma.download
         .update({
           where: { id: dl.id },
-          data: { status: "FAILED", error: "No progress for 20 min — searching a fresh source" },
+          data: {
+            status: "FAILED",
+            error: wasStuck ? "No progress — searching a fresh source" : dl.error,
+            ...(reset ? { metadata: {} } : {}),
+          },
         })
         .catch(() => {});
     }
     void logActivity(
-      `Re-searching ${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)} — ${wasStuck ? "stuck download" : "failed"}, new source (${best.seeders ?? 0} seeders)`,
+      `Re-searching ${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)} — ${reset ? "retrying all sources" : "new source"} (${best.seeders ?? 0} seeders)`,
       { kind: "switch", title: dl.title },
     );
     await createDownload({
