@@ -47,6 +47,7 @@ services:
       DOWNLOAD_DIR: /data/downloads
       DOWNLOAD_CONCURRENCY: ${DOWNLOAD_CONCURRENCY:-6}
       GRAB_CONCURRENCY: ${GRAB_CONCURRENCY:-4}
+      MIN_DL_SPEED: ${MIN_DL_SPEED:-40960}
       EXTRA_TRACKERS: ${EXTRA_TRACKERS:-}
     volumes:
       - downloads:/data/downloads

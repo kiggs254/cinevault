@@ -41,6 +41,12 @@ const REGISTER_TIMEOUT_MS = 90_000;
 const STALL_MS = 10 * 60 * 1000; // grace for a connected-but-slow torrent
 const DEAD_MS = 2 * 60 * 1000; // grace when qBittorrent reports no seeders at all
 const MISSING_MS = 60 * 1000; // grace before treating a vanished torrent as a stall
+// A download must pull data at least this fast (bytes/s) to count as "moving
+// considerably". If it crawls below it — and isn't gaining real progress — for
+// STALL_MS, proactively switch to a working source. Tune with MIN_DL_SPEED.
+const MIN_DL_SPEED = Math.max(0, Math.floor(Number(process.env.MIN_DL_SPEED)) || 40 * 1024);
+const PROGRESS_STEP = 3; // % gained within the window that still counts as movement
+const RESOURCE_MAX_PROGRESS = 45; // don't swap a slow (but not dead) download past this %
 const MAX_RESOURCE_ATTEMPTS = 5; // source swaps before giving up (retry-failed keeps going after)
 
 // How many jobs the worker runs at once. Each active download holds a slot for
@@ -154,7 +160,7 @@ async function pollUntilComplete(
   id: string,
   hash: string,
 ): Promise<QbTorrentInfo> {
-  let lastProgress = -1;
+  let lastProgress = 0;
   let stalledSince = Date.now();
   let missingSince = 0;
 
@@ -202,29 +208,34 @@ async function pollUntilComplete(
 
     if (isComplete(info)) return info;
 
-    // Stall detection driven by qBittorrent, not a fixed clock: reset on any
-    // movement, or while qBit is holding the torrent (queue/hash-check). When it's
-    // genuinely stuck, how long we wait comes from qBit's read of the swarm — no
-    // seeders anywhere = dead source, give up fast; connected-but-slow gets the
-    // longer grace. (Errored states re-source immediately, above.)
-    if (info.dlspeed > 0 || pct > lastProgress + 0.01 || isHeldByQbittorrent(info)) {
+    // "Moving considerably" = pulling data at a healthy rate OR gaining real progress
+    // this window; also reset while qBit is holding the torrent (queue/hash-check).
+    // Otherwise, once the grace window elapses, proactively switch to a working
+    // source. A no-seeders/metaDL torrent is dead → switch fast (DEAD_MS) at any
+    // progress; a merely-slow one waits STALL_MS and is only swapped while still
+    // early (don't throw away a mostly-done download). Errored states re-source above.
+    const movingWell =
+      info.dlspeed >= MIN_DL_SPEED || pct >= lastProgress + PROGRESS_STEP || isHeldByQbittorrent(info);
+    if (movingWell) {
       lastProgress = pct;
       stalledSince = Date.now();
     } else {
       const swarmSeeds = info.num_complete ?? info.num_seeds ?? 0;
-      // metaDL = can't even fetch the .torrent from the magnet → treat as dead and
-      // switch fast (its swarm counts are unreliable). Otherwise: no seeders → fast;
-      // connected-but-slow → the long grace.
       const dead = info.state === "metaDL" || swarmSeeds <= 0;
       const grace = dead ? DEAD_MS : STALL_MS;
       if (Date.now() - stalledSince > grace) {
-        throw new StalledError(
-          info.state === "metaDL"
-            ? "couldn't fetch torrent metadata (dead magnet)"
-            : swarmSeeds <= 0
-              ? `no seeders — qBittorrent state "${info.state}"`
-              : `no download progress — qBittorrent state "${info.state}"`,
-        );
+        if (dead || pct < RESOURCE_MAX_PROGRESS) {
+          throw new StalledError(
+            info.state === "metaDL"
+              ? "couldn't fetch torrent metadata (dead magnet)"
+              : swarmSeeds <= 0
+                ? `no seeders — qBittorrent state "${info.state}"`
+                : `too slow — under ${Math.round(MIN_DL_SPEED / 1024)} KB/s for 10 min`,
+          );
+        }
+        // Slow but already well underway — let it finish; just reset the window.
+        lastProgress = pct;
+        stalledSince = Date.now();
       }
     }
   }
