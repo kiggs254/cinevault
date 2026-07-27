@@ -11,6 +11,9 @@ import { z } from "zod";
 const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   APP_URL: z.string().url().default("http://localhost:3000"),
+  // Public trackers appended to new torrents (newline/comma separated). Omit for
+  // the built-in list; set to "none" to disable.
+  EXTRA_TRACKERS: z.string().optional(),
 
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),

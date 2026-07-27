@@ -12,6 +12,7 @@ import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig } from "../lib/config";
 import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
+import { resolveExtraTrackers } from "../lib/torrent/trackers";
 import {
   reSource,
   grabSeason,
@@ -621,8 +622,15 @@ async function configureQbittorrent(): Promise<void> {
     if (!cfg.qbit.url) return;
     const qb = new QbClient(cfg.qbit);
     await qb.ensureCategory(CATEGORY);
-    await qb.setPreferences({ queueing_enabled: false });
-    console.log("[worker] qBittorrent queueing disabled (worker manages concurrency)");
+    const trackers = resolveExtraTrackers();
+    await qb.setPreferences({
+      queueing_enabled: false,
+      add_trackers_enabled: trackers.length > 0,
+      add_trackers: trackers.join("\n"),
+    });
+    console.log(
+      `[worker] qBittorrent: queueing off; ${trackers.length} public trackers appended to new torrents`,
+    );
   } catch (e) {
     console.error("[worker] qBittorrent prefs setup failed:", (e as Error).message);
   }
