@@ -12,6 +12,26 @@ Built to run on [Coolify](https://coolify.io) or any Docker host.
 
 ---
 
+## Screenshots
+
+![Cinevault screenshot 1](https://i.ibb.co/RGJ4dV3y/Screenshot-2026-07-27-at-12-31-32-PM.png)
+
+![Cinevault screenshot 2](https://i.ibb.co/rRtHXnBc/Screenshot-2026-07-27-at-12-31-42-PM.png)
+
+![Cinevault screenshot 3](https://i.ibb.co/7xJMcC6M/Screenshot-2026-07-27-at-12-32-17-PM.png)
+
+![Cinevault screenshot 4](https://i.ibb.co/gMKDZbfZ/Screenshot-2026-07-27-at-12-32-34-PM.png)
+
+![Cinevault screenshot 5](https://i.ibb.co/vxC2sFm9/Screenshot-2026-07-27-at-12-32-52-PM.png)
+
+![Cinevault screenshot 6](https://i.ibb.co/mFSB6Nby/Screenshot-2026-07-27-at-12-33-04-PM.png)
+
+![Cinevault screenshot 7](https://i.ibb.co/YTc8zVjr/Screenshot-2026-07-27-at-12-33-14-PM.png)
+
+![Cinevault screenshot 8](https://i.ibb.co/yF5B493C/Screenshot-2026-07-27-at-12-33-31-PM.png)
+
+---
+
 ## Searching with AI
 
 The heart of Cinevault is the **Assistant** — a chat that turns a sentence into a
