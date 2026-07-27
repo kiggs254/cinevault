@@ -2,15 +2,31 @@ import { getConfig } from "../config";
 
 const API = "https://api.telegram.org";
 
+export interface TgPhotoSize {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+}
 export interface TgMessage {
   message_id: number;
   chat: { id: number; type?: string };
   text?: string;
+  photo?: TgPhotoSize[];
+  caption?: string;
   from?: { id: number; first_name?: string; username?: string };
+}
+export interface TgCallbackQuery {
+  id: string;
+  data?: string;
+  from?: { id: number };
+  message?: TgMessage;
 }
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
+  callback_query?: TgCallbackQuery;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -86,6 +102,43 @@ export async function sendPhoto(
 export interface NotifyButton {
   text: string;
   path: string; // relative to the app's public URL (e.g. "/downloads")
+}
+
+/** Resolve a Telegram file_id to a downloadable URL (valid ~1h). */
+export async function getFileLink(token: string, fileId: string): Promise<string | null> {
+  const f = await tgApi<{ file_path?: string }>(token, "getFile", { file_id: fileId });
+  return f?.file_path ? `${API}/file/bot${token}/${f.file_path}` : null;
+}
+
+/** Acknowledge a tapped inline button (stops Telegram's spinner). */
+export async function answerCallback(token: string, id: string, text?: string): Promise<void> {
+  await tgApi(token, "answerCallbackQuery", { callback_query_id: id, text });
+}
+
+export type InlineButton = { text: string; url?: string; callback_data?: string };
+
+/** Send a message (or photo + caption) with an inline keyboard of url/callback buttons. */
+export async function sendWithKeyboard(
+  token: string,
+  chatId: string | number,
+  opts: { text: string; photo?: string | null; keyboard?: InlineButton[][] },
+): Promise<void> {
+  const reply_markup = opts.keyboard?.length ? { inline_keyboard: opts.keyboard } : undefined;
+  if (opts.photo) {
+    const ok = await tgApi(token, "sendPhoto", {
+      chat_id: chatId,
+      photo: opts.photo,
+      caption: opts.text.slice(0, 1000),
+      reply_markup,
+    });
+    if (ok) return; // else fall through to a text message
+  }
+  await tgApi(token, "sendMessage", {
+    chat_id: chatId,
+    text: opts.text.slice(0, 4000),
+    reply_markup,
+    disable_web_page_preview: true,
+  });
 }
 
 /**
