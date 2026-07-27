@@ -39,6 +39,7 @@ const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
 const STALL_MS = 10 * 60 * 1000; // grace for a connected-but-slow torrent
 const DEAD_MS = 2 * 60 * 1000; // grace when qBittorrent reports no seeders at all
+const MISSING_MS = 60 * 1000; // grace before treating a vanished torrent as a stall
 const MAX_RESOURCE_ATTEMPTS = 5; // source swaps before giving up (retry-failed keeps going after)
 
 // How many jobs the worker runs at once. Each active download holds a slot for
@@ -154,11 +155,22 @@ async function pollUntilComplete(
 ): Promise<QbTorrentInfo> {
   let lastProgress = -1;
   let stalledSince = Date.now();
+  let missingSince = 0;
 
   for (;;) {
     await sleep(POLL_MS);
     const info = (await qb.getByHash(hash)) ?? (await qb.getByTag(id));
-    if (!info) continue;
+    if (!info) {
+      // The torrent vanished from qBittorrent (a swap race, a manual delete, or a
+      // lost session). Brief gaps are fine; if it stays gone, re-source instead of
+      // spinning here forever on stale progress (the app-vs-qBit desync).
+      if (!missingSince) missingSince = Date.now();
+      else if (Date.now() - missingSince > MISSING_MS) {
+        throw new StalledError("torrent vanished from qBittorrent");
+      }
+      continue;
+    }
+    missingSince = 0;
     if (isErrored(info)) throw new StalledError(`qBittorrent reported "${info.state}"`);
 
     const pct = Math.min(100, info.progress * 100);
@@ -524,6 +536,19 @@ const worker = new Worker<DownloadJobData>(
         .update({ where: { id: downloadId }, data: { status: "FAILED", error: message } })
         .catch(() => {});
       await publishProgress({ type: "status", downloadId, status: "FAILED", message });
+      // Remove the dead torrent from qBittorrent so its state matches the app.
+      try {
+        const row = await prisma.download.findUnique({
+          where: { id: downloadId },
+          select: { qbitHash: true },
+        });
+        const cfg = await getConfig();
+        if (row?.qbitHash && cfg.qbit.url) {
+          await new QbClient(cfg.qbit).delete([row.qbitHash], true).catch(() => {});
+        }
+      } catch {
+        /* best-effort */
+      }
       // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
     }
   },
