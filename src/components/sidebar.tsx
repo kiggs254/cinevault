@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Home,
   Library,
@@ -24,7 +24,7 @@ import { SearchOverlay } from "@/components/search-overlay";
 
 const NAV = [
   { href: "/", label: "Home", icon: Home },
-  { href: "/?search=1", label: "Search", icon: SearchIcon },
+  { href: "/search", label: "Search", icon: SearchIcon },
   { href: "/library", label: "Library", icon: Library },
   { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/discover", label: "Discover", icon: Compass },
@@ -107,27 +107,11 @@ function Wordmark({ compact }: { compact?: boolean }) {
 }
 
 /* --------------------------------- Nav list -------------------------------- */
-// Pure/presentational so it can double as the Suspense fallback below.
-function NavList({
-  pathname,
-  searchActive,
-  activeCount,
-}: {
-  pathname: string;
-  searchActive: boolean;
-  activeCount: number;
-}) {
+function NavList({ pathname, activeCount }: { pathname: string; activeCount: number }) {
   return (
     <nav className="flex flex-col gap-1">
       {NAV.map(({ href, label, icon: Icon }) => {
-        // Search lives at /?search=1, so both it and Home share pathname "/".
-        // Disambiguate them with the search flag.
-        const active =
-          href === "/?search=1"
-            ? searchActive
-            : href === "/"
-              ? pathname === "/" && !searchActive
-              : isActive(href, pathname);
+        const active = isActive(href, pathname);
         return (
           <Link
             key={href}
@@ -163,15 +147,6 @@ function NavList({
   );
 }
 
-// Reads the ?search param to light up the Search item; needs a Suspense boundary.
-function NavListLive({ activeCount }: { activeCount: number }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  return (
-    <NavList pathname={pathname} searchActive={searchParams.get("search") !== null} activeCount={activeCount} />
-  );
-}
-
 /* ------------------------------- Desktop rail ------------------------------ */
 export function Sidebar() {
   const pathname = usePathname();
@@ -187,9 +162,7 @@ export function Sidebar() {
         <p className="label mt-2">AI Media Deck</p>
       </div>
 
-      <Suspense fallback={<NavList pathname={pathname} searchActive={false} activeCount={activeCount} />}>
-        <NavListLive activeCount={activeCount} />
-      </Suspense>
+      <NavList pathname={pathname} activeCount={activeCount} />
 
       <div className="mt-auto space-y-4">
         <div className="card p-3">
