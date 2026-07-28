@@ -37,7 +37,7 @@ export interface ResolvedConfig {
     legalIndexerIds: number[];
   };
   jellyfin: { url?: string; apiKey?: string; userId?: string };
-  telegram: { botToken?: string; chatId?: string };
+  telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
   appUrl: string; // public base URL of this app (for deep-link CTAs)
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
@@ -72,6 +72,18 @@ function str(v: unknown): string | undefined {
 }
 function num(v: unknown, fallback: number): number {
   return typeof v === "number" && !Number.isNaN(v) ? v : fallback;
+}
+/** Parse a comma/space/newline-separated list of Telegram chat IDs (dedup, numeric only). */
+function parseIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter((s) => /^-?\d+$/.test(s)),
+    ),
+  );
 }
 
 /** Resolve the effective config used by every integration. */
@@ -148,6 +160,7 @@ export async function getConfig(): Promise<ResolvedConfig> {
     telegram: {
       botToken: dec("telegramBotToken") ?? env.TELEGRAM_BOT_TOKEN,
       chatId: str(settings.telegramChatId) ?? env.TELEGRAM_CHAT_ID,
+      allowedIds: parseIds(str(settings.telegramAllowedIds) ?? env.TELEGRAM_ALLOWED_IDS),
     },
     appUrl: str(settings.appUrl) ?? env.APP_URL,
     retention: {

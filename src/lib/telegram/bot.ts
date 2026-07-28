@@ -1,4 +1,4 @@
-import { getConfig, saveConfig } from "../config";
+import { getConfig, saveConfig, type ResolvedConfig } from "../config";
 import {
   tgApi,
   sendMessage,
@@ -24,7 +24,15 @@ import {
 
 const histories = new Map<number, AgentMessage[]>();
 const pending = new Map<number, AgentOption[]>();
+const warned = new Set<number>(); // unauthorized chats we've already replied to once
 let running = false;
+
+/** Owner (auto-linked on first message) or an allow-listed family member. */
+function isAuthorized(cfg: ResolvedConfig, chatId: number | string): boolean {
+  const id = String(chatId);
+  if (cfg.telegram.chatId && id === String(cfg.telegram.chatId)) return true;
+  return cfg.telegram.allowedIds.includes(id);
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,7 +87,7 @@ async function handle(u: TgUpdate): Promise<void> {
   if (u.callback_query) {
     const chatId = u.callback_query.message?.chat.id;
     if (chatId == null) return;
-    if (cfg.telegram.chatId && String(chatId) !== String(cfg.telegram.chatId)) return;
+    if (!isAuthorized(cfg, chatId)) return;
     await handleCallback(token, chatId, u.callback_query);
     return;
   }
@@ -88,7 +96,7 @@ async function handle(u: TgUpdate): Promise<void> {
   if (!msg) return;
   const chatId = msg.chat.id;
 
-  // First chat to talk claims the notification target.
+  // First chat to talk claims the owner slot (notification target + admin).
   if (!cfg.telegram.chatId) {
     await saveConfig({ telegramChatId: String(chatId) });
     await sendMessage(
@@ -96,8 +104,17 @@ async function handle(u: TgUpdate): Promise<void> {
       chatId,
       "✅ Linked! Send me a movie or TV poster and I'll identify it, score it against your taste, and offer a one-tap download. Or just type “download Dune Part Two 4k”.",
     );
-  } else if (String(chatId) !== String(cfg.telegram.chatId)) {
-    return; // ignore other chats
+  } else if (!isAuthorized(cfg, chatId)) {
+    // Not the owner and not allow-listed — tell them once how to get access.
+    if (!warned.has(chatId)) {
+      warned.add(chatId);
+      await sendMessage(
+        token,
+        chatId,
+        `🔒 This is a private bot. Ask the owner to add your Telegram ID ${chatId} to the allow-list in Settings.`,
+      );
+    }
+    return;
   }
 
   if (msg.photo?.length) {

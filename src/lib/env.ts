@@ -66,6 +66,7 @@ const schema = z.object({
   // Telegram bot — two-way agent chat + push notifications
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_ALLOWED_IDS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

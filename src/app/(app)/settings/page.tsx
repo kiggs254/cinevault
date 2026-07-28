@@ -91,11 +91,12 @@ const SECTIONS: Section[] = [
   {
     group: "notifications",
     title: "Telegram bot",
-    desc: "Chat with the agent and get push notifications for new episodes, discoveries, and completed downloads. Create a bot with @BotFather, then message it to link.",
+    desc: "Chat with the agent and get push notifications for new episodes, discoveries, and completed downloads. Create a bot with @BotFather, then message it to link. Share with family by adding their IDs to the allow-list — they message the bot once and it replies with their ID.",
     test: "telegram",
     fields: [
       { k: "telegramBotToken", label: "Bot token", type: "secret" },
-      { k: "telegramChatId", label: "Chat ID (auto-set when you message the bot)", type: "text" },
+      { k: "telegramChatId", label: "Owner chat ID (auto-set on first message)", type: "text" },
+      { k: "telegramAllowedIds", label: "Family access — allowed chat IDs (comma-separated)", type: "text" },
     ],
   },
   {
