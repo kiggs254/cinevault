@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import {
   Home,
   Library,
@@ -106,6 +106,72 @@ function Wordmark({ compact }: { compact?: boolean }) {
   );
 }
 
+/* --------------------------------- Nav list -------------------------------- */
+// Pure/presentational so it can double as the Suspense fallback below.
+function NavList({
+  pathname,
+  searchActive,
+  activeCount,
+}: {
+  pathname: string;
+  searchActive: boolean;
+  activeCount: number;
+}) {
+  return (
+    <nav className="flex flex-col gap-1">
+      {NAV.map(({ href, label, icon: Icon }) => {
+        // Search lives at /?search=1, so both it and Home share pathname "/".
+        // Disambiguate them with the search flag.
+        const active =
+          href === "/?search=1"
+            ? searchActive
+            : href === "/"
+              ? pathname === "/" && !searchActive
+              : isActive(href, pathname);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              active ? "text-accent" : "text-muted hover:text-ink"
+            }`}
+            style={active ? { background: "var(--color-accent-soft)" } : undefined}
+          >
+            <Icon size={18} strokeWidth={2} />
+            {label}
+            {href === "/downloads" && activeCount > 0 && (
+              <span
+                className="badge ml-auto"
+                style={{ color: "var(--color-accent)", borderColor: "var(--color-accent)55" }}
+              >
+                {activeCount}
+              </span>
+            )}
+            {href === "/chat" && activeCount > 0 && (
+              <span
+                className="relative ml-auto flex h-2 w-2 flex-none items-center justify-center"
+                title={`${activeCount} working in the background`}
+              >
+                <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-accent opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
+              </span>
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+// Reads the ?search param to light up the Search item; needs a Suspense boundary.
+function NavListLive({ activeCount }: { activeCount: number }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  return (
+    <NavList pathname={pathname} searchActive={searchParams.get("search") !== null} activeCount={activeCount} />
+  );
+}
+
 /* ------------------------------- Desktop rail ------------------------------ */
 export function Sidebar() {
   const pathname = usePathname();
@@ -121,41 +187,9 @@ export function Sidebar() {
         <p className="label mt-2">AI Media Deck</p>
       </div>
 
-      <nav className="flex flex-col gap-1">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = isActive(href, pathname);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                active ? "text-accent" : "text-muted hover:text-ink"
-              }`}
-              style={active ? { background: "var(--color-accent-soft)" } : undefined}
-            >
-              <Icon size={18} strokeWidth={2} />
-              {label}
-              {href === "/downloads" && activeCount > 0 && (
-                <span
-                  className="badge ml-auto"
-                  style={{ color: "var(--color-accent)", borderColor: "var(--color-accent)55" }}
-                >
-                  {activeCount}
-                </span>
-              )}
-              {href === "/chat" && activeCount > 0 && (
-                <span
-                  className="relative ml-auto flex h-2 w-2 flex-none items-center justify-center"
-                  title={`${activeCount} working in the background`}
-                >
-                  <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-accent opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-                </span>
-              )}
-            </Link>
-          );
-        })}
-      </nav>
+      <Suspense fallback={<NavList pathname={pathname} searchActive={false} activeCount={activeCount} />}>
+        <NavListLive activeCount={activeCount} />
+      </Suspense>
 
       <div className="mt-auto space-y-4">
         <div className="card p-3">
