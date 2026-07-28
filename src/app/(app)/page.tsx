@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search as SearchIcon, Loader2, ChevronRight, ArrowLeft } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
@@ -49,12 +50,17 @@ function SearchBar({
   onChange: (v: string) => void;
   autoFocus?: boolean;
 }) {
+  const ref = useRef<HTMLInputElement>(null);
+  // Focus reliably whenever the field becomes active (mount or autoFocus→true),
+  // without stealing focus mid-typing (deps only on the flag, not the value).
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus();
+  }, [autoFocus]);
   return (
     <div className="relative">
       <SearchIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
       <input
-        // eslint-disable-next-line jsx-a11y/no-autofocus
-        autoFocus={autoFocus}
+        ref={ref}
         className="input pl-9"
         placeholder="Search movies & shows to download…"
         value={q}
@@ -67,7 +73,11 @@ function SearchBar({
   );
 }
 
-export default function HomePage() {
+function HomeContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const wantSearch = searchParams.get("search") !== null;
+
   const [rows, setRows] = useState<Row[]>([]);
   const [heroItems, setHeroItems] = useState<HeroItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +87,13 @@ export default function HomePage() {
   const [searching, setSearching] = useState(false);
   const [seed, setSeed] = useState<TitleSeed | null>(null);
   const [heroSearchOpen, setHeroSearchOpen] = useState(false);
+
+  // The sidebar's "Search" item links to /?search=1. Keep the in-page search
+  // view in sync with that param (desktop opens it this way; mobile via the
+  // hero icon, which flips the state directly without touching the URL).
+  useEffect(() => {
+    setHeroSearchOpen(wantSearch);
+  }, [wantSearch]);
 
   useEffect(() => {
     jsonFetch<{ rows: Row[]; error?: string }>("/api/browse")
@@ -115,6 +132,7 @@ export default function HomePage() {
     setQ("");
     setResults(null);
     setHeroSearchOpen(false);
+    if (wantSearch) router.replace("/");
   }
 
   const open = (i: TmdbItem) =>
@@ -222,5 +240,13 @@ export default function HomePage() {
 
       {seed && <TitleModal seed={seed} onClose={() => setSeed(null)} />}
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <HomeContent />
+    </Suspense>
   );
 }
