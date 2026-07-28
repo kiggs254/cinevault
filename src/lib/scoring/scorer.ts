@@ -69,6 +69,33 @@ const SEASON_RANGE =
   /\bs(?:eason)?s?[\s._-]*0*(\d{1,2})[\s._-]*(?:-|–|—|to)[\s._-]*s?(?:eason)?[\s._-]*0*(\d{1,2})\b/i;
 
 /**
+ * Distinct season numbers a release names — via "Season N", bare "SNN" (not the
+ * SNNENN episode form), dash/"to" ranges ("S01-S04"), and space/dot-joined lists
+ * ("S01 S02", "Season 1 4 S01 S04"). Episode markers and years are ignored.
+ * Used to reject multi-season packs when a single season was requested — the
+ * dash in "S01-S04" is often lost to spaces in indexer names ("S01 S04").
+ */
+export function seasonNumbersIn(title: string): number[] {
+  const found = new Set<number>();
+  // Explicit dash/"to" range → every season it spans.
+  const range = title.match(SEASON_RANGE);
+  if (range) {
+    const lo = Math.min(Number(range[1]), Number(range[2]));
+    const hi = Math.max(Number(range[1]), Number(range[2]));
+    for (let s = lo; s <= hi; s++) found.add(s);
+  }
+  // "Season N" (but not "Season N Episode/E-M", which is a single episode).
+  for (const m of title.matchAll(/\bseason[\s._-]*0*(\d{1,2})\b(?![\s._-]*e\d)/gi)) {
+    found.add(Number(m[1]));
+  }
+  // Bare "SNN" not followed by an episode number.
+  for (const m of title.matchAll(/\bs0*(\d{1,2})\b(?![\s._-]*e\d)/gi)) {
+    found.add(Number(m[1]));
+  }
+  return [...found].filter((n) => n >= 1 && n <= 50);
+}
+
+/**
  * Inclusive test: does this release contain `season`? Covers single-season names,
  * ranges (S01-S03), and complete-series/collection packs. False for single
  * episodes and "Season N Episode M". Used to filter re-source candidates.
@@ -100,6 +127,9 @@ export function isSingleSeasonPack(title: string, season: number): boolean {
   if (/\bseasons\b/i.test(title)) return false; // plural → multi-season
   if (COMPLETE_SERIES.test(title)) return false;
   if (SEASON_RANGE.test(title)) return false;
+  // Names more than one season ("S01 S04", "Season 1 4", "S01 S02 S03") → a
+  // multi-season pack even without a dash. Never grab it for one season.
+  if (seasonNumbersIn(title).length > 1) return false;
   return seasonWordMatches(title, season);
 }
 
