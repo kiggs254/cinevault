@@ -137,6 +137,37 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     setMsg(`Grabbing Season ${season} in the background — episodes appear in Downloads.`);
   }
 
+  async function downloadAllSeasons() {
+    const seasons = (details?.seasons ?? [])
+      .filter((s) => s.released && s.seasonNumber >= 1)
+      .map((s) => s.seasonNumber);
+    if (seasons.length === 0) {
+      setMsg("No released seasons yet.");
+      return;
+    }
+    setBusy(true);
+    setMsg("");
+    try {
+      await jsonFetch("/api/download/tmdb", {
+        method: "POST",
+        body: JSON.stringify({
+          tmdbId: seed.tmdbId,
+          mediaType: "tv",
+          title: details?.title ?? seed.title,
+          year: details?.year ?? seed.year,
+          seasons,
+        }),
+      });
+      setMsg(
+        `Grabbing ${seasons.length} season${seasons.length === 1 ? "" : "s"} in the background — episodes appear in Downloads.`,
+      );
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function downloadEpisode(season: number, episode: number) {
     setMsg("");
     await jsonFetch("/api/download/tmdb", {
@@ -189,6 +220,8 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
       : undefined;
   const dateLabel = formatDate(details?.releaseDate);
   const showMetaStrip = !!(rating || details?.certification || runtimeLabel || dateLabel);
+  const releasedSeasons = (details?.seasons ?? []).filter((s) => s.released && s.seasonNumber >= 1);
+  const allSeasonsOwned = releasedSeasons.length > 0 && releasedSeasons.every((s) => s.owned);
 
   return (
     <div className="sheet fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
@@ -288,6 +321,20 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                 </button>
               ) : (
                 <>
+                  {releasedSeasons.length > 0 && (
+                    <button
+                      className="btn btn-accent mb-3 w-full"
+                      onClick={downloadAllSeasons}
+                      disabled={busy || allSeasonsOwned}
+                    >
+                      {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      {allSeasonsOwned
+                        ? "All seasons in library"
+                        : releasedSeasons.length > 1
+                          ? `Download all ${releasedSeasons.length} seasons`
+                          : "Download season"}
+                    </button>
+                  )}
                   <div className="mb-3 flex items-center justify-between">
                     <p className="label">Episodes</p>
                     <button
