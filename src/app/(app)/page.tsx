@@ -139,7 +139,8 @@ export default function HomePage() {
       {!searchView && (
         <div className="relative">
           <HeroSlider items={heroItems} onOpen={open} />
-          <div className="absolute right-4 top-4 z-20 flex justify-end md:right-8 md:top-6">
+          {/* Search affordance on the hero is mobile-only; desktop uses the sidebar's Search item. */}
+          <div className="absolute right-4 top-4 z-20 flex justify-end md:hidden">
             <button
               aria-label="Search"
               onClick={() => setHeroSearchOpen(true)}

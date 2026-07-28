@@ -112,8 +112,10 @@ export function Sidebar() {
   const okCount = systems.filter((s) => s.ok).length;
   const activeCount = useActiveCount();
   const logout = useLogout();
+  const [searchOpen, setSearchOpen] = useState(false);
 
   return (
+    <>
     <aside className="sticky top-0 hidden h-screen w-60 flex-none flex-col border-r border-border bg-surface/30 p-5 backdrop-blur-sm md:flex">
       <div className="mb-8 mt-1">
         <Wordmark />
@@ -121,6 +123,13 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-1">
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:text-ink"
+        >
+          <SearchIcon size={18} strokeWidth={2} />
+          Search
+        </button>
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = isActive(href, pathname);
           return (
@@ -214,6 +223,8 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
+    </>
   );
 }
 
