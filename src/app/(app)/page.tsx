@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search as SearchIcon, Loader2, ChevronRight, ArrowLeft, X } from "lucide-react";
+import { Search as SearchIcon, Loader2, ChevronRight, ArrowLeft } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TitleModal, type TitleSeed } from "@/components/title-modal";
 import { HeroSlider, type HeroItem } from "@/components/hero-slider";
@@ -42,38 +42,26 @@ function SearchBar({
   q,
   searching,
   onChange,
-  translucent,
   autoFocus,
 }: {
   q: string;
   searching: boolean;
   onChange: (v: string) => void;
-  translucent?: boolean;
   autoFocus?: boolean;
 }) {
   return (
     <div className="relative">
-      <SearchIcon
-        size={16}
-        className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 ${translucent ? "text-white/70" : "text-faint"}`}
-      />
+      <SearchIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
       <input
         // eslint-disable-next-line jsx-a11y/no-autofocus
         autoFocus={autoFocus}
-        className={
-          translucent
-            ? "w-full rounded-xl border border-white/20 bg-black/25 py-2.5 pl-9 pr-9 text-sm text-ink outline-none backdrop-blur-md transition placeholder:text-white/60 focus:border-accent focus:bg-black/40"
-            : "input pl-9"
-        }
+        className="input pl-9"
         placeholder="Search movies & shows to download…"
         value={q}
         onChange={(e) => onChange(e.target.value)}
       />
       {searching && (
-        <Loader2
-          size={15}
-          className={`absolute right-3 top-1/2 -translate-y-1/2 animate-spin ${translucent ? "text-white/70" : "text-faint"}`}
-        />
+        <Loader2 size={15} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-faint" />
       )}
     </div>
   );
@@ -138,45 +126,37 @@ export default function HomePage() {
       posterUrl: i.posterUrl ?? null,
     });
 
-  const showHero = !results && heroItems.length > 0;
+  const hasHero = heroItems.length > 0;
+  // Dedicated search layout — entered from the hero's search icon, or shown by
+  // default when there's no hero (no TMDB key / empty browse). Its input stays
+  // mounted the whole time (results render below it), so typing never switches
+  // views or loses focus.
+  const searchView = heroSearchOpen || !hasHero;
 
   return (
     <div className="min-h-full">
-      {/* Hero slider with a search icon in the top-right that expands into a field */}
-      {showHero && (
+      {/* Hero slider with a search icon in the top-right that opens the search view */}
+      {!searchView && (
         <div className="relative">
           <HeroSlider items={heroItems} onOpen={open} />
           <div className="absolute right-4 top-4 z-20 flex justify-end md:right-8 md:top-6">
-            {heroSearchOpen ? (
-              <div className="flex w-72 max-w-[calc(100vw-2rem)] items-center gap-2">
-                <SearchBar q={q} searching={searching} onChange={search} translucent autoFocus />
-                <button
-                  aria-label="Close search"
-                  onClick={clearSearch}
-                  className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-white/20 bg-black/30 text-white/80 backdrop-blur-md"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            ) : (
-              <button
-                aria-label="Search"
-                onClick={() => setHeroSearchOpen(true)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50"
-              >
-                <SearchIcon size={19} />
-              </button>
-            )}
+            <button
+              aria-label="Search"
+              onClick={() => setHeroSearchOpen(true)}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50"
+            >
+              <SearchIcon size={19} />
+            </button>
           </div>
         </div>
       )}
 
       <div className="mx-auto max-w-6xl px-5 py-6 md:px-10">
-        {/* Search bar at the top when there is no hero (no TMDB key, or while searching).
-            Once a search is active, a Back button returns to the hero + browse rows. */}
-        {!showHero && (
+        {/* One persistent search input. It never unmounts while the search view is
+            open, so focus and cursor survive as results stream in below it. */}
+        {searchView && (
           <div className="mb-8 flex items-center gap-3">
-            {results && (
+            {hasHero && (
               <button
                 className="btn btn-ghost flex-none px-3 py-2"
                 onClick={clearSearch}
@@ -186,7 +166,7 @@ export default function HomePage() {
               </button>
             )}
             <div className="max-w-2xl flex-1">
-              <SearchBar q={q} searching={searching} onChange={search} />
+              <SearchBar q={q} searching={searching} onChange={search} autoFocus={heroSearchOpen} />
             </div>
           </div>
         )}
