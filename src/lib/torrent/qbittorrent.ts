@@ -22,6 +22,7 @@ export interface QbTorrentInfo {
   content_path: string;
   completed: number;
   amount_left: number;
+  tags?: string; // comma-separated tag list
 }
 
 export interface QbConfig {
@@ -208,8 +209,16 @@ export class QbClient {
   }
 
   async getByTag(tag: string): Promise<QbTorrentInfo | undefined> {
+    const want = tag.trim().toLowerCase();
+    if (!want) return undefined;
+    // Match on each torrent's own `tags` field rather than trusting the
+    // server-side `tag` query param — older qBittorrent builds ignore it and
+    // return every torrent, which made this return the biggest torrent overall
+    // and cross-linked concurrent adds of similarly-named releases to one hash.
     const list = await this.info({ tag });
-    return list.sort((a, b) => b.size - a.size)[0];
+    return list.find((t) =>
+      (t.tags ?? "").split(",").some((x) => x.trim().toLowerCase() === want),
+    );
   }
 
   async getByHash(hash: string): Promise<QbTorrentInfo | undefined> {

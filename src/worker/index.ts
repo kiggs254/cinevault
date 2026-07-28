@@ -100,6 +100,14 @@ async function setStatus(id: string, status: DownloadStatus, progress?: number) 
 
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
+/** True when a qBittorrent torrent name plausibly IS this release (not a sibling). */
+function torrentMatchesRelease(torrentName: string, releaseName: string): boolean {
+  const a = normName(torrentName);
+  const b = normName(releaseName);
+  if (a.length < 12 || b.length < 12) return true; // too short to judge — don't block
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 /**
  * Wait for an added torrent to appear. Beyond hash/tag, this handles the case
  * where qBittorrent DEDUPED the add — keeping a pre-existing torrent under an old
@@ -117,22 +125,25 @@ async function waitForTorrent(
   timeoutMs: number,
 ): Promise<QbTorrentInfo | undefined> {
   const deadline = Date.now() + timeoutMs;
-  const target = normName(releaseName);
+  const canName = normName(releaseName).length >= 12;
+  const named = (t: QbTorrentInfo) => torrentMatchesRelease(t.name, releaseName);
   while (Date.now() < deadline) {
-    let info = (hash ? await qb.getByHash(hash) : undefined) ?? (await qb.getByTag(id));
+    // 1. Exact info-hash — ground truth, survives qBittorrent's dedup.
+    let info = hash ? await qb.getByHash(hash) : undefined;
     if (!info) {
       const all = await qb.list(CATEGORY).catch(() => [] as QbTorrentInfo[]);
-      const byName =
-        target.length >= 12
-          ? all.find((t) => {
-              const n = normName(t.name);
-              return n === target || (n.length >= 12 && (n.includes(target) || target.includes(n)));
-            })
-          : undefined;
-      const freshList = all.filter((t) => !beforeHashes.has(t.hash.toLowerCase()));
-      // Prefer a name match (specific); fall back to a lone new torrent. Avoid
-      // guessing when several new torrents appeared (concurrent adds).
-      info = byName ?? (freshList.length === 1 ? freshList[0] : undefined);
+      const fresh = all.filter((t) => !beforeHashes.has(t.hash.toLowerCase()));
+      const tagged = await qb.getByTag(id);
+      info =
+        // 2. A newly-appeared torrent whose name matches this release — unique
+        //    even when several similar adds run concurrently.
+        (canName ? fresh.find(named) : undefined) ??
+        // 3. Our unique tag, but only if its name fits (a mis-tagged sibling
+        //    from an earlier racy lookup must not win).
+        (tagged && (!canName || named(tagged)) ? tagged : undefined) ??
+        // 4. A lone new torrent, or any category torrent matching by name.
+        (fresh.length === 1 ? fresh[0] : undefined) ??
+        (canName ? all.find(named) : undefined);
       if (info) await qb.addTags([info.hash], id).catch(() => {});
     }
     if (info) return info;
@@ -389,8 +400,15 @@ async function processDownload(id: string): Promise<void> {
   // original tag) or by tag; add it only if genuinely absent.
   const expectedHash =
     dl.infoHash ?? (dl.magnet.startsWith("magnet:") ? parseInfoHash(dl.magnet) : undefined);
-  let info =
-    (expectedHash ? await qb.getByHash(expectedHash) : undefined) ?? (await qb.getByTag(id));
+  // The info-hash is identity (trust it). A tag lookup is only trusted when the
+  // torrent it returns really is this release — this both prevents binding to a
+  // sibling under concurrent adds and self-heals a row already cross-linked to
+  // the wrong hash (it re-resolves / re-adds its own torrent below).
+  let info = expectedHash ? await qb.getByHash(expectedHash) : undefined;
+  if (!info) {
+    const tagged = await qb.getByTag(id);
+    if (tagged && torrentMatchesRelease(tagged.name, dl.releaseName)) info = tagged;
+  }
   if (!info) {
     const isMagnet = dl.magnet.startsWith("magnet:");
     const beforeHashes = await categoryHashes(qb);
