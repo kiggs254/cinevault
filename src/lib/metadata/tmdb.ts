@@ -301,6 +301,38 @@ export async function discoverByGenres(
   );
 }
 
+export interface DiscoverPage {
+  results: TmdbTitle[];
+  page: number;
+  totalPages: number;
+}
+
+/** Paginated TV discovery by streaming network (+ optional genre & min-rating). */
+export async function discoverTv(
+  apiKey: string,
+  opts: { networkId?: number; genreIds?: number[]; minRating?: number; page?: number },
+): Promise<DiscoverPage> {
+  const params: Record<string, string> = {
+    sort_by: "popularity.desc",
+    include_adult: "false",
+    "vote_count.gte": "20",
+    page: String(Math.min(500, Math.max(1, Math.floor(opts.page ?? 1)))),
+  };
+  if (opts.networkId) params.with_networks = String(opts.networkId);
+  if (opts.genreIds?.length) params.with_genres = opts.genreIds.join(",");
+  if (opts.minRating && opts.minRating > 0) params["vote_average.gte"] = String(opts.minRating);
+  const data = await tmdbFetch<{ results?: unknown[]; page?: number; total_pages?: number }>(
+    apiKey,
+    `/discover/tv`,
+    params,
+  );
+  return {
+    results: toTitles(data, "tv"),
+    page: data?.page ?? opts.page ?? 1,
+    totalPages: Math.min(data?.total_pages ?? 1, 500), // TMDB caps discover at page 500
+  };
+}
+
 export async function getGenres(
   apiKey: string,
   type: TmdbMediaType,

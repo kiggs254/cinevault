@@ -11,6 +11,8 @@ import {
   Film,
   Check,
   RefreshCw,
+  Download,
+  Star,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -53,6 +55,38 @@ interface TmdbHit {
   year?: number;
   posterUrl?: string;
 }
+interface NetTitle {
+  tmdbId: number;
+  mediaType: string;
+  title: string;
+  year?: number;
+  posterUrl?: string;
+  voteAverage?: number;
+}
+
+/** Popular TV networks by their (stable) TMDB network ids, for `with_networks`. */
+const NETWORKS: { id: number; name: string }[] = [
+  { id: 213, name: "Netflix" },
+  { id: 1024, name: "Prime Video" },
+  { id: 2739, name: "Disney+" },
+  { id: 2552, name: "Apple TV+" },
+  { id: 49, name: "HBO / Max" },
+  { id: 453, name: "Hulu" },
+  { id: 3353, name: "Peacock" },
+  { id: 4330, name: "Paramount+" },
+  { id: 174, name: "AMC" },
+  { id: 88, name: "FX" },
+  { id: 67, name: "Showtime" },
+  { id: 71, name: "The CW" },
+  { id: 56, name: "Cartoon Network" },
+  { id: 80, name: "Adult Swim" },
+];
+const RATINGS: { v: number; label: string }[] = [
+  { v: 0, label: "Any rating" },
+  { v: 6, label: "6+" },
+  { v: 7, label: "7+" },
+  { v: 8, label: "8+" },
+];
 
 /* ------------------------------ component ----------------------------- */
 export default function DiscoverPage() {
@@ -70,12 +104,49 @@ export default function DiscoverPage() {
 
   const confirm = useConfirm();
   const [seed, setSeed] = useState<TitleSeed | null>(null);
-  const [tab, setTab] = useState<"foryou" | "following">("foryou");
+  const [tab, setTab] = useState<"foryou" | "following" | "networks">("foryou");
   const [showTaste, setShowTaste] = useState(false);
   const [recType, setRecType] = useState<"all" | "movie" | "tv">("all");
+  const [owned, setOwned] = useState<Set<number>>(new Set());
 
+  // Networks tab
+  const [netGenres, setNetGenres] = useState<{ id: number; name: string }[]>([]);
+  const [network, setNetwork] = useState(NETWORKS[0].id);
+  const [genre, setGenre] = useState(0);
+  const [minRating, setMinRating] = useState(0);
+  const [netItems, setNetItems] = useState<NetTitle[]>([]);
+  const [netPage, setNetPage] = useState(1);
+  const [netTotal, setNetTotal] = useState(1);
+  const [netLoading, setNetLoading] = useState(false);
+
+  const isOwned = (id: number) => owned.has(id);
   const openRec = (r: Rec) =>
     setSeed({ tmdbId: r.tmdbId, mediaType: r.mediaType, title: r.title, year: r.year, posterUrl: r.posterUrl });
+  const openNet = (t: NetTitle) =>
+    setSeed({ tmdbId: t.tmdbId, mediaType: "tv", title: t.title, year: t.year ?? null, posterUrl: t.posterUrl ?? null });
+
+  async function loadMoreNetwork() {
+    if (netLoading || netPage >= netTotal) return;
+    setNetLoading(true);
+    const q = new URLSearchParams({ network: String(network), page: String(netPage + 1) });
+    if (genre) q.set("genres", String(genre));
+    if (minRating) q.set("rating", String(minRating));
+    try {
+      const d = await jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(
+        `/api/discover/network?${q}`,
+      );
+      setNetItems((cur) => {
+        const ids = new Set(cur.map((c) => c.tmdbId));
+        return [...cur, ...d.results.filter((r) => !ids.has(r.tmdbId))];
+      });
+      setNetPage(d.page);
+      setNetTotal(d.totalPages);
+    } catch {
+      /* ignore */
+    } finally {
+      setNetLoading(false);
+    }
+  }
 
   const shownRecs = recType === "all" ? recs : recs.filter((r) => r.mediaType === recType);
 
@@ -107,6 +178,37 @@ export default function DiscoverPage() {
     loadRecs();
     loadFollows();
   }, [loadRecs, loadFollows]);
+
+  useEffect(() => {
+    jsonFetch<{ tmdbIds: number[] }>("/api/library/owned")
+      .then((d) => setOwned(new Set(d.tmdbIds)))
+      .catch(() => {});
+    jsonFetch<{ genres: { id: number; name: string }[] }>("/api/discover/genres")
+      .then((d) => setNetGenres(d.genres))
+      .catch(() => {});
+  }, []);
+
+  // Networks tab: reset + load page 1 whenever the network/genre/rating changes.
+  useEffect(() => {
+    if (tab !== "networks") return;
+    let alive = true;
+    setNetLoading(true);
+    const q = new URLSearchParams({ network: String(network), page: "1" });
+    if (genre) q.set("genres", String(genre));
+    if (minRating) q.set("rating", String(minRating));
+    jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(`/api/discover/network?${q}`)
+      .then((d) => {
+        if (!alive) return;
+        setNetItems(d.results);
+        setNetPage(d.page);
+        setNetTotal(d.totalPages);
+      })
+      .catch(() => alive && setNetItems([]))
+      .finally(() => alive && setNetLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [tab, network, genre, minRating]);
 
   async function refreshRecs() {
     setRefreshing(true);
@@ -218,7 +320,7 @@ export default function DiscoverPage() {
 
       {/* Tabs */}
       <div className="mb-6 flex gap-2">
-        {(["foryou", "following"] as const).map((t) => (
+        {(["foryou", "networks", "following"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -226,10 +328,100 @@ export default function DiscoverPage() {
               tab === t ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
             }`}
           >
-            {t === "foryou" ? "For You" : `Following${follows.length ? ` · ${follows.length}` : ""}`}
+            {t === "foryou" ? "For You" : t === "networks" ? "Networks" : `Following${follows.length ? ` · ${follows.length}` : ""}`}
           </button>
         ))}
       </div>
+
+      {/* Networks */}
+      {tab === "networks" && (
+        <section className="mb-8">
+          <div className="no-scrollbar -mx-1 mb-3 flex gap-2 overflow-x-auto px-1 pb-1">
+            {NETWORKS.map((n) => (
+              <button
+                key={n.id}
+                onClick={() => setNetwork(n.id)}
+                className={`flex-none rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  network === n.id ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
+                }`}
+              >
+                {n.name}
+              </button>
+            ))}
+          </div>
+          <div className="mb-5 flex flex-wrap gap-2">
+            <select
+              value={genre}
+              onChange={(e) => setGenre(Number(e.target.value))}
+              className="input max-w-[11rem] py-1.5 text-sm"
+              aria-label="Genre"
+            >
+              <option value={0}>All genres</option>
+              {netGenres.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+            <select
+              value={minRating}
+              onChange={(e) => setMinRating(Number(e.target.value))}
+              className="input max-w-[9rem] py-1.5 text-sm"
+              aria-label="Minimum rating"
+            >
+              {RATINGS.map((r) => (
+                <option key={r.v} value={r.v}>{r.label}</option>
+              ))}
+            </select>
+          </div>
+          {netItems.length === 0 && !netLoading ? (
+            <p className="text-sm text-faint">No shows match — try another network or fewer filters.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 sm:gap-4 lg:grid-cols-6">
+                {netItems.map((t) => (
+                  <button key={t.tmdbId} onClick={() => openNet(t)} className="group text-left" title={t.title}>
+                    <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2 transition-colors group-hover:border-accent">
+                      {t.posterUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={t.posterUrl} alt={t.title} className="h-full w-full object-cover" loading="lazy" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-faint"><Tv size={22} /></div>
+                      )}
+                      {isOwned(t.tmdbId) && (
+                        <span
+                          className="absolute right-1.5 top-1.5 rounded-full bg-black/70 p-1"
+                          style={{ color: "var(--color-success)" }}
+                          title="In your library"
+                        >
+                          <Download size={12} />
+                        </span>
+                      )}
+                      {typeof t.voteAverage === "number" && t.voteAverage > 0 && (
+                        <span className="absolute bottom-1.5 left-1.5 flex items-center gap-0.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          <Star size={9} className="fill-accent text-accent" /> {t.voteAverage.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 truncate text-xs text-muted group-hover:text-ink">
+                      {t.title} {t.year ? <span className="text-faint">({t.year})</span> : null}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-6 flex justify-center">
+                {netLoading ? (
+                  <Loader2 size={20} className="animate-spin text-faint" />
+                ) : netPage < netTotal ? (
+                  <button className="btn btn-ghost text-muted" onClick={loadMoreNetwork}>
+                    Load more
+                  </button>
+                ) : netItems.length > 0 ? (
+                  <p className="text-xs text-faint">That&apos;s everything.</p>
+                ) : null}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* Movies / TV separator */}
       {tab === "foryou" && recs.length > 0 && (
@@ -409,6 +601,15 @@ export default function DiscoverPage() {
                     <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">
                       {r.mediaType === "tv" ? "TV" : "Movie"}
                     </span>
+                    {isOwned(r.tmdbId) && (
+                      <span
+                        className="absolute bottom-2 right-2 rounded-full bg-black/70 p-1"
+                        style={{ color: "var(--color-success)" }}
+                        title="In your library"
+                      >
+                        <Download size={13} />
+                      </span>
+                    )}
                   </div>
                   <div className="p-3">
                     <p className="truncate text-sm font-medium text-ink" title={r.title}>
