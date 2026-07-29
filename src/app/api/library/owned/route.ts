@@ -6,14 +6,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * tmdbIds that have at least one COMPLETED download — used to badge Discover
- * cards as already in the library.
+ * tmdbIds already in the shared library (any member has a COMPLETED download) —
+ * used to badge Discover/search cards as available so nothing is re-downloaded.
+ * Files are shared, so availability is global, not per-member.
  */
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const rows = await prisma.download.findMany({
-    where: { userId: user.id, status: "COMPLETED", tmdbId: { not: null } },
+    where: { status: "COMPLETED", tmdbId: { not: null } },
     select: { tmdbId: true },
     distinct: ["tmdbId"],
   });

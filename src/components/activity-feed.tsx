@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -52,8 +52,23 @@ function timeAgo(iso: string): string {
 export function ActivityFeed() {
   const { activity, downloads } = useDownloadsCtx();
   const [open, setOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // System activity (fetching, grabbing, uploading) is admin-only plumbing.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => alive && setIsAdmin(d?.role === "admin"))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const activeCount = downloads.filter((d) => ACTIVE.has(d.status)).length;
 
+  if (!isAdmin) return null;
   if (activity.length === 0 && activeCount === 0) return null;
 
   return (

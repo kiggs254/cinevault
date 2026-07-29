@@ -427,31 +427,70 @@ async function cloneCompletedTwin(
     orderBy: { completedAt: "desc" },
   });
   if (!twin) return null;
+  const clone = await cloneAsOwned(twin, userId);
+  return toDTO(clone);
+}
+
+/** Clone a COMPLETED download into a member's library (same shared S3 object). */
+async function cloneAsOwned(row: Download, userId: string): Promise<Download> {
   const clone = await prisma.download.create({
     data: {
-      title: twin.title,
-      releaseName: twin.releaseName,
-      kind: twin.kind,
-      year: twin.year,
-      season: twin.season,
-      episode: twin.episode,
-      tmdbId: twin.tmdbId,
+      title: row.title,
+      releaseName: row.releaseName,
+      kind: row.kind,
+      year: row.year,
+      season: row.season,
+      episode: row.episode,
+      tmdbId: row.tmdbId,
       userId,
-      posterUrl: twin.posterUrl,
-      overview: twin.overview,
-      magnet: twin.magnet,
+      posterUrl: row.posterUrl,
+      overview: row.overview,
+      magnet: row.magnet,
       status: "COMPLETED",
       progress: 100,
-      sizeBytes: twin.sizeBytes,
-      downloadedBytes: twin.sizeBytes,
-      s3Bucket: twin.s3Bucket,
-      s3Key: twin.s3Key,
-      s3Prefix: twin.s3Prefix,
+      sizeBytes: row.sizeBytes,
+      downloadedBytes: row.sizeBytes,
+      s3Bucket: row.s3Bucket,
+      s3Key: row.s3Key,
+      s3Prefix: row.s3Prefix,
+      metadata: row.metadata ?? undefined,
       completedAt: new Date(),
     },
   });
   await publishProgress({ type: "created", downloadId: clone.id, status: "COMPLETED" });
-  return toDTO(clone);
+  return clone;
+}
+
+/**
+ * Adopt any COMPLETED copy of a season that's already in storage (another
+ * member's rows) into this member's library — so re-adding a show that's already
+ * downloaded is instant and never re-downloads. Clones the pack row and/or the
+ * episode rows the requester doesn't already have.
+ */
+async function adoptSeasonFromStorage(
+  userId: string | null | undefined,
+  tmdbId: number,
+  season: number,
+): Promise<void> {
+  if (!userId) return;
+  const stored = await prisma.download.findMany({
+    where: { status: "COMPLETED", tmdbId, season, s3Key: { not: null }, NOT: { userId } },
+    orderBy: { completedAt: "desc" },
+  });
+  if (stored.length === 0) return;
+  const mine = await prisma.download.findMany({
+    where: { userId, tmdbId, season, status: { notIn: ["FAILED", "CANCELLED"] } },
+    select: { episode: true },
+  });
+  const have = new Set<number | null>(mine.map((m) => m.episode));
+  const seen = new Set<number | null>();
+  for (const row of stored) {
+    const key = row.episode; // null = whole-season pack
+    if (seen.has(key)) continue; // newest copy of this episode/pack already handled
+    seen.add(key);
+    if (have.has(key)) continue; // requester already has it
+    await cloneAsOwned(row, userId);
+  }
 }
 
 /** Episodes already in the library for a show (by TMDB id or title), season+episode set. */
@@ -630,6 +669,10 @@ export async function grabSeason(opts: {
     }
   }
   if (available.length === 0) return { ...base, reason: "no aired episodes" };
+
+  // If this season is already in storage (downloaded by any member), adopt those
+  // rows into this member's library — instant, no re-download.
+  await adoptSeasonFromStorage(opts.userId, opts.tmdbId, opts.season);
 
   // Already have a whole-season pack? It covers every episode — don't re-search a
   // pack or grab episodes individually (guards "Grab missing" from re-downloading).

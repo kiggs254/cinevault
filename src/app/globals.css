@@ -44,6 +44,10 @@
   --color-danger: #c9483d;
   --color-info: #3d7cbf;
 }
+/* Accent (orange) buttons need a white label in light mode for contrast. */
+:root[data-theme="light"] .btn-accent {
+  color: #ffffff;
+}
 /* The film-grain overlay is tuned for dark; soften it on light. */
 :root[data-theme="light"] .grain {
   opacity: 0.1;

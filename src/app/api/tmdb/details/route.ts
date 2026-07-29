@@ -18,9 +18,10 @@ export async function GET(req: Request) {
   const type = url.searchParams.get("type") === "movie" ? "movie" : "tv";
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  // Which seasons/movies are already downloaded (for the UI to show "owned").
+  // Which seasons/movies are already in the shared library (any member) — files
+  // are shared, so "owned" is global. Keeps members from re-adding/re-downloading.
   const owned = await prisma.download.findMany({
-    where: { userId: user.id, tmdbId: id, status: { notIn: ["FAILED", "CANCELLED"] } },
+    where: { tmdbId: id, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { season: true, episode: true, kind: true },
   });
   const ownedMovie = owned.some((o) => o.kind === "MOVIE");
