@@ -92,9 +92,13 @@ model User {
   telegramLinkToken String?   @unique // one-time token for the Telegram deep-link
   notifyTelegram    Boolean   @default(true)
   statusToken       String    @unique @default(cuid()) // opaque token for the public /welcome status poll
+  invitedById       String? // who referred this member (via their invite code)
   createdAt         DateTime  @default(now())
   approvedAt        DateTime?
 
+  invitedBy       User?            @relation("MemberInvites", fields: [invitedById], references: [id], onDelete: SetNull)
+  invited         User[]           @relation("MemberInvites")
+  invites         Invite[] // referral codes this member created
   downloads       Download[]
   follows         FollowedShow[]
   wanted          WantedMovie[]
@@ -102,6 +106,23 @@ model User {
   chats           ChatSession[]
 
   @@index([status])
+  @@index([invitedById])
+}
+
+/// A single referral/invite code. Registration is invite-only; each code links
+/// the new member back to whoever created it.
+model Invite {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  label       String? // optional note ("for mom")
+  maxUses     Int      @default(1)
+  uses        Int      @default(0)
+  disabled    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([createdById])
 }
 
 /// A persisted assistant conversation. `items` holds the ordered chat items

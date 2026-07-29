@@ -12,6 +12,7 @@ interface Member {
   jellyfinUserId: string | null;
   createdAt: string;
   approvedAt: string | null;
+  invitedBy: { username: string } | null;
   _count: { downloads: number; follows: number };
 }
 
@@ -112,11 +113,12 @@ export default function UsersPage() {
                         {u.role === "admin" && <span className="badge badge-accent">admin</span>}
                         {u.telegramChatId && <Send size={12} className="text-faint" aria-label="Telegram linked" />}
                       </p>
-                      <p className="mt-0.5 flex items-center gap-3 text-xs text-faint">
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-faint">
                         <span className="inline-flex items-center gap-1">
                           <DownloadIcon size={11} /> {u._count.downloads}
                         </span>
                         <span>{u._count.follows} following</span>
+                        {u.invitedBy && <span>invited by {u.invitedBy.username}</span>}
                         <span>joined {new Date(u.createdAt).toLocaleDateString()}</span>
                       </p>
                     </div>

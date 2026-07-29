@@ -17,6 +17,7 @@ import {
   HardDrive,
   Users,
   Send,
+  Ticket,
   type LucideIcon,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
@@ -31,6 +32,7 @@ const BASE_NAV = [
   { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
+  { href: "/invite", label: "Invite", icon: Ticket },
 ];
 
 /** Admins additionally manage members + settings. */

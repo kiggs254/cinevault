@@ -7,6 +7,7 @@ import { encrypt, safeDecrypt } from "../crypto";
 import { jellyfinReady } from "../jellyfin/client";
 import { createJellyfinUser, setUserDisabled, deleteJellyfinUser } from "../jellyfin/admin";
 import { notifyUser, notifyOwnerNewRegistration } from "../telegram/client";
+import { validInvite, consumeInvite } from "./invites";
 import type { User } from "@prisma/client";
 
 /** Canonical username form (lowercased, trimmed) — shared by portal + Jellyfin. */
@@ -65,10 +66,10 @@ export async function registerUser(input: {
   code?: string;
 }): Promise<RegisterResult> {
   const cfg = await getConfig();
-  if (!cfg.registration.enabled) return { ok: false, error: "Registration is currently closed." };
-  if (cfg.registration.code && (input.code ?? "") !== cfg.registration.code) {
-    return { ok: false, error: "Invalid invite code." };
-  }
+  if (!cfg.registration.enabled) return { ok: false, error: "Membership is currently closed." };
+  // Invite-only: every new member needs a valid referral code from an existing member.
+  const invite = await validInvite(input.code);
+  if (!invite) return { ok: false, error: "You need a valid invite code from a member to join." };
   const username = normUsername(input.username);
   if (!/^[a-z0-9_]{3,20}$/.test(username)) {
     return { ok: false, error: "Username must be 3–20 characters: lowercase letters, numbers, or underscore." };
@@ -79,6 +80,10 @@ export async function registerUser(input: {
   const existing = await prisma.user.findUnique({ where: { username }, select: { id: true } });
   if (existing) return { ok: false, error: "That username is taken." };
 
+  const referrer = await prisma.user.findUnique({
+    where: { id: invite.createdById },
+    select: { username: true },
+  });
   const user = await prisma.user.create({
     data: {
       username,
@@ -86,22 +91,27 @@ export async function registerUser(input: {
       pendingSecret: encrypt(input.password), // held (encrypted) until Jellyfin is provisioned on approval
       status: "pending",
       role: "member",
+      invitedById: invite.createdById,
     },
   });
-  await notifyOwnerNewRegistration({ id: user.id, username }).catch(() => {});
+  await consumeInvite(invite.id);
+  await notifyOwnerNewRegistration({ id: user.id, username, invitedBy: referrer?.username ?? null }).catch(
+    () => {},
+  );
   return { ok: true, statusToken: user.statusToken };
 }
 
 /** Public status poll for /welcome — by opaque token (no username enumeration). */
 export async function statusByToken(
   token: string,
-): Promise<{ status: string; username: string } | null> {
+): Promise<{ status: string; username: string; telegramLinked: boolean } | null> {
   if (!token) return null;
   const user = await prisma.user.findUnique({
     where: { statusToken: token },
-    select: { status: true, username: true },
+    select: { status: true, username: true, telegramChatId: true },
   });
-  return user ?? null;
+  if (!user) return null;
+  return { status: user.status, username: user.username, telegramLinked: !!user.telegramChatId };
 }
 
 /* -------------------------------- approval -------------------------------- */
@@ -187,6 +197,7 @@ export async function listUsers() {
       jellyfinUserId: true,
       createdAt: true,
       approvedAt: true,
+      invitedBy: { select: { username: true } },
       _count: { select: { downloads: true, follows: true } },
     },
   });
@@ -201,10 +212,21 @@ export async function getTelegramLinkToken(userId: string): Promise<string> {
   return token;
 }
 
-/** Bind a Telegram chat to the account holding this link token. */
+/** Mint a link token for a pending registrant (public /welcome, no session). */
+export async function getTelegramLinkTokenByStatusToken(statusToken: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { statusToken },
+    select: { id: true, status: true },
+  });
+  if (!user || user.status === "denied" || user.status === "suspended") return null;
+  return getTelegramLinkToken(user.id);
+}
+
+/** Bind a Telegram chat to the account holding this link token. Pending members
+ * may pre-link so they get the approval ping. */
 export async function bindTelegramChat(linkToken: string, chatId: string): Promise<User | null> {
   const user = await prisma.user.findUnique({ where: { telegramLinkToken: linkToken } });
-  if (!user || user.status !== "active") return null;
+  if (!user || user.status === "denied" || user.status === "suspended") return null;
   const taken = await prisma.user.findUnique({
     where: { telegramChatId: chatId },
     select: { id: true },

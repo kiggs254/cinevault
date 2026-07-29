@@ -13,7 +13,13 @@ export async function GET(req: Request) {
   if (!info) return NextResponse.json({ status: "unknown" }, { status: 404, headers });
   const cfg = await getConfig();
   return NextResponse.json(
-    { status: info.status, username: info.username, serverUrl: cfg.jellyfin.publicUrl ?? null },
+    {
+      status: info.status,
+      username: info.username,
+      telegramLinked: info.telegramLinked,
+      serverUrl: cfg.jellyfin.publicUrl ?? null,
+      telegramConfigured: !!cfg.telegram.botToken,
+    },
     { headers },
   );
 }

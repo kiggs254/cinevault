@@ -11,26 +11,38 @@ import {
   Tv,
   Globe,
   ArrowRight,
+  Link2,
+  Send,
+  Check,
 } from "lucide-react";
 
-/** Official Jellyfin client links. Store links are stable; the rest go to the
- * canonical downloads page (always correct for Fire TV / Roku / LG / Samsung). */
+/** Official Jellyfin clients. Store links are stable; the rest go to the canonical
+ * downloads page (always correct for Fire TV / Roku / LG / Samsung). Labels are kept
+ * short so they never overflow. */
 const APPS: { label: string; href: string; icon: typeof Smartphone }[] = [
-  { label: "iPhone / iPad (App Store)", href: "https://apps.apple.com/app/jellyfin-mobile/id1480192618", icon: Smartphone },
-  { label: "Android (Google Play)", href: "https://play.google.com/store/apps/details?id=org.jellyfin.mobile", icon: Smartphone },
+  { label: "iPhone / iPad", href: "https://apps.apple.com/app/jellyfin-mobile/id1480192618", icon: Smartphone },
+  { label: "Android", href: "https://play.google.com/store/apps/details?id=org.jellyfin.mobile", icon: Smartphone },
   { label: "Android TV / Fire TV", href: "https://play.google.com/store/apps/details?id=org.jellyfin.androidtv", icon: Tv },
-  { label: "All other devices (Roku, LG, Samsung…)", href: "https://jellyfin.org/downloads/clients/", icon: Tv },
+  { label: "Roku, LG, Samsung & more", href: "https://jellyfin.org/downloads/clients/", icon: Tv },
 ];
 
+interface Status {
+  status: string;
+  username: string;
+  telegramLinked: boolean;
+  serverUrl: string | null;
+  telegramConfigured: boolean;
+}
+
 export default function WelcomePage() {
-  const [status, setStatus] = useState("loading");
-  const [username, setUsername] = useState("");
-  const [serverUrl, setServerUrl] = useState("");
+  const [s, setS] = useState<Status | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get("token") ?? "";
     if (!token) {
-      setStatus("unknown");
+      setLoading(false);
       return;
     }
     let alive = true;
@@ -38,12 +50,11 @@ export default function WelcomePage() {
     const poll = async () => {
       try {
         const res = await fetch(`/api/auth/status?token=${token}`);
-        const d = await res.json().catch(() => ({}));
+        const d = (await res.json().catch(() => null)) as Status | null;
         if (!alive) return;
-        setStatus(d.status ?? "unknown");
-        setUsername(d.username ?? "");
-        setServerUrl(d.serverUrl ?? "");
-        if (d.status !== "active" && d.status !== "denied") timer = setTimeout(poll, 5000);
+        setS(d);
+        setLoading(false);
+        if (d && d.status !== "active" && d.status !== "denied") timer = setTimeout(poll, 5000);
       } catch {
         if (alive) timer = setTimeout(poll, 5000);
       }
@@ -54,6 +65,29 @@ export default function WelcomePage() {
       if (timer) clearTimeout(timer);
     };
   }, []);
+
+  async function copyStatusLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  }
+
+  async function connectTelegram() {
+    const token = new URLSearchParams(window.location.search).get("token") ?? "";
+    try {
+      const res = await fetch(`/api/telegram/link?statusToken=${token}`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (d.url) window.open(d.url, "_blank", "noopener");
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  const status = s?.status ?? (loading ? "loading" : "unknown");
 
   return (
     <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden p-6">
@@ -75,15 +109,15 @@ export default function WelcomePage() {
 
         {status === "loading" && (
           <p className="flex items-center gap-2 text-sm text-faint">
-            <Loader2 size={15} className="animate-spin" /> Checking your status…
+            <Loader2 size={15} className="animate-spin" /> Checking your membership…
           </p>
         )}
 
         {status === "unknown" && (
           <p className="text-sm text-muted">
-            We couldn&apos;t find your request.{" "}
+            We couldn&apos;t find your application.{" "}
             <Link href="/register" className="text-accent hover:underline">
-              Register again
+              Apply again
             </Link>
             .
           </p>
@@ -92,33 +126,55 @@ export default function WelcomePage() {
         {status === "pending" && (
           <div>
             <p className="mb-2 flex items-center gap-2 font-semibold text-ink">
-              <Clock size={18} className="text-accent" /> Waiting for approval
+              <Clock size={18} className="text-accent" /> Membership pending
             </p>
-            <p className="text-sm text-muted">
-              Thanks{username ? `, ${username}` : ""}! Your request is in. The owner has been notified and will
-              approve you shortly — this page updates automatically. You can leave it open.
+            <p className="mb-5 text-sm text-muted">
+              Thanks{s?.username ? `, ${s.username}` : ""}! A member referred you and the librarian has been
+              notified. Your card will be issued once they approve you — this page updates automatically, so you
+              can leave it open.
             </p>
+
+            <div className="space-y-2">
+              <button onClick={copyStatusLink} className="btn btn-ghost w-full justify-start">
+                {copied ? <Check size={15} style={{ color: "var(--color-success)" }} /> : <Link2 size={15} />}
+                {copied ? "Link copied — save it to check back" : "Copy my status link (to check back later)"}
+              </button>
+
+              {s?.telegramConfigured &&
+                (s.telegramLinked ? (
+                  <p className="flex items-center gap-2 px-1 text-sm text-muted">
+                    <Check size={15} style={{ color: "var(--color-success)" }} /> Telegram connected — we&apos;ll
+                    message you the moment you&apos;re approved.
+                  </p>
+                ) : (
+                  <button onClick={connectTelegram} className="btn btn-ghost w-full justify-start">
+                    <Send size={15} /> Get notified on Telegram when approved
+                  </button>
+                ))}
+            </div>
           </div>
         )}
 
         {status === "denied" && (
           <div>
-            <p className="mb-2 font-semibold text-ink">Request not approved</p>
-            <p className="text-sm text-muted">Reach out to the person who invited you if you think this is a mistake.</p>
+            <p className="mb-2 font-semibold text-ink">Membership declined</p>
+            <p className="text-sm text-muted">Reach out to the member who referred you if you think this is a mistake.</p>
           </div>
         )}
 
         {status === "active" && (
           <div>
             <p className="mb-1 flex items-center gap-2 text-lg font-semibold text-ink">
-              <CheckCircle2 size={20} style={{ color: "var(--color-success)" }} /> You&apos;re in
-              {username ? `, ${username}` : ""}!
+              <CheckCircle2 size={20} style={{ color: "var(--color-success)" }} /> Welcome to the library
+              {s?.username ? `, ${s.username}` : ""}!
             </p>
-            <p className="mb-5 text-sm text-muted">Your Cinevault + Jellyfin account is ready. Here&apos;s how to start watching.</p>
+            <p className="mb-5 text-sm text-muted">
+              Your library card is ready. Here&apos;s how to start watching the collection.
+            </p>
 
             <ol className="space-y-5">
               <li>
-                <p className="label mb-2">1 · Install Jellyfin on your device</p>
+                <p className="label mb-2">1 · Install Jellyfin (your player)</p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {APPS.map((a) => (
                     <a
@@ -126,40 +182,41 @@ export default function WelcomePage() {
                       href={a.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="btn btn-ghost justify-start text-left text-sm"
+                      className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
                     >
-                      <a.icon size={15} /> {a.label}
+                      <a.icon size={15} className="flex-none" />
+                      <span className="min-w-0 leading-snug">{a.label}</span>
                     </a>
                   ))}
                 </div>
               </li>
 
               <li>
-                <p className="label mb-2">2 · Add the server</p>
+                <p className="label mb-2">2 · Add the library</p>
                 <p className="mb-2 text-sm text-muted">In the Jellyfin app, tap “Add Server” and enter:</p>
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
-                  <Globe size={15} className="text-faint" />
-                  <code className="mono text-sm text-ink">{serverUrl || "ask the owner for the server URL"}</code>
+                <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-border bg-surface-2 px-3 py-2">
+                  <Globe size={15} className="flex-none text-faint" />
+                  <code className="mono whitespace-nowrap text-sm text-ink">
+                    {s?.serverUrl || "ask the librarian for the server address"}
+                  </code>
                 </div>
               </li>
 
               <li>
-                <p className="label mb-2">3 · Sign in</p>
+                <p className="label mb-2">3 · Sign in with your card</p>
                 <p className="text-sm text-muted">
-                  Use username <span className="mono text-ink">{username}</span> and the password you chose when
-                  registering.
+                  Use member name <span className="mono text-ink">{s?.username}</span> and the password you set
+                  when applying.
                 </p>
               </li>
             </ol>
 
-            <div className="mt-6 flex flex-col gap-2 border-t border-border pt-5 sm:flex-row">
-              <Link href="/login" className="btn btn-accent flex-1">
-                Open the Cinevault portal <ArrowRight size={15} />
-              </Link>
-            </div>
+            <Link href="/login" className="btn btn-accent mt-6 w-full">
+              Enter the Cinevault portal <ArrowRight size={15} />
+            </Link>
             <p className="mt-3 text-center text-xs text-faint">
-              Browse &amp; request titles in the portal — then watch them on Jellyfin. You can connect Telegram from
-              inside the portal.
+              Browse &amp; request titles in the portal — then watch them on Jellyfin. You can connect Telegram
+              and invite friends from inside the portal.
             </p>
           </div>
         )}

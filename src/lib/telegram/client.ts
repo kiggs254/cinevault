@@ -195,7 +195,11 @@ export async function notifyUser(
 }
 
 /** Ping the owner with Approve/Deny buttons for a pending registration. */
-export async function notifyOwnerNewRegistration(user: { id: string; username: string }): Promise<void> {
+export async function notifyOwnerNewRegistration(user: {
+  id: string;
+  username: string;
+  invitedBy?: string | null;
+}): Promise<void> {
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;
@@ -207,10 +211,11 @@ export async function notifyOwnerNewRegistration(user: { id: string; username: s
       ],
     ];
     if (/^https?:\/\//i.test(base) && !/localhost|127\.0\.0\.1/i.test(base)) {
-      rows.push([{ text: "👥 Manage users", url: `${base}/users` }]);
+      rows.push([{ text: "👥 Manage members", url: `${base}/users` }]);
     }
+    const referral = user.invitedBy ? `\nReferred by ${user.invitedBy}.` : "";
     await sendWithKeyboard(cfg.telegram.botToken, cfg.telegram.chatId, {
-      text: `🆕 New registration: “${user.username}” wants to join Cinevault.\nApprove to auto-create their Jellyfin account.`,
+      text: `🆕 New membership request: “${user.username}” wants to join.${referral}\nApprove to issue their library card (auto-creates their Jellyfin account).`,
       keyboard: rows,
     });
   } catch {

@@ -82,7 +82,8 @@ const SECTIONS: Section[] = [
     desc: "Reads what you watch to power recommendations, auto-follow, and retention. On the same Docker network use http://jellyfin:8096.",
     test: "jellyfin",
     fields: [
-      { k: "jellyfinUrl", label: "Jellyfin URL", type: "url", placeholder: "http://jellyfin:8096" },
+      { k: "jellyfinUrl", label: "Jellyfin URL (internal)", type: "url", placeholder: "http://jellyfin:8096" },
+      { k: "jellyfinPublicUrl", label: "Jellyfin public URL (shown to members, Play links)", type: "url", placeholder: "https://jellyfin.example.com" },
       { k: "jellyfinApiKey", label: "Jellyfin API key", type: "secret" },
       { k: "jellyfinUserId", label: "User ID (optional — first user if blank)", type: "text" },
       { k: "autoFollowFromJellyfin", label: "Auto-follow shows I'm watching", type: "toggle" },

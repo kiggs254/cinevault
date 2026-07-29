@@ -1,25 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clapperboard, User as UserIcon, Lock, Loader2, ArrowRight } from "lucide-react";
+import { Clapperboard, User as UserIcon, Lock, Ticket, Loader2, ArrowRight } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const [code, setCode] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Prefill the invite code from the shared link (?code=…).
+  useEffect(() => {
+    const c = new URLSearchParams(window.location.search).get("code");
+    if (c) setCode(c);
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const code =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("code") ?? undefined
-        : undefined;
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -29,7 +32,7 @@ export default function RegisterPage() {
     if (res.ok && data.statusToken) {
       router.replace(`/welcome?token=${data.statusToken}`);
     } else {
-      setError(data.error ?? "Registration failed");
+      setError(data.error ?? "Something went wrong");
       setLoading(false);
     }
   }
@@ -53,18 +56,37 @@ export default function RegisterPage() {
           >
             CINE<span className="text-accent">VAULT</span>
           </h1>
-          <p className="mt-3 text-sm text-muted">Request access to the community library.</p>
+          <p className="mt-3 text-sm text-muted">
+            A private film &amp; TV library. Membership is invite-only — enter the code a member shared with
+            you.
+          </p>
+        </div>
+
+        <label className="label mb-2 block" htmlFor="code">
+          Invite code
+        </label>
+        <div className="relative mb-4">
+          <Ticket size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+          <input
+            id="code"
+            type="text"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="input mono pl-9 tracking-wider"
+            placeholder="XXXX-XXXX"
+          />
         </div>
 
         <label className="label mb-2 block" htmlFor="username">
-          Choose a username
+          Choose a member name
         </label>
         <div className="relative mb-4">
           <UserIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <input
             id="username"
             type="text"
-            autoFocus
             autoCapitalize="none"
             autoCorrect="off"
             value={username}
@@ -75,7 +97,7 @@ export default function RegisterPage() {
         </div>
 
         <label className="label mb-2 block" htmlFor="pw">
-          Choose a password
+          Set a password
         </label>
         <div className="relative">
           <Lock size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -89,18 +111,19 @@ export default function RegisterPage() {
           />
         </div>
         <p className="mt-2 text-xs text-faint">
-          You&apos;ll use these same credentials to sign in to Jellyfin on your devices.
+          This member name &amp; password are your library card — they sign you in here and on Jellyfin, where
+          you&apos;ll watch.
         </p>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
         <button type="submit" disabled={loading} className="btn btn-accent mt-6 w-full">
           {loading ? (
             <>
-              <Loader2 size={15} className="animate-spin" /> Submitting…
+              <Loader2 size={15} className="animate-spin" /> Applying…
             </>
           ) : (
             <>
-              Request access <ArrowRight size={15} />
+              Apply for membership <ArrowRight size={15} />
             </>
           )}
         </button>
