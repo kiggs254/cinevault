@@ -117,7 +117,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         method: "POST",
         body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "movie", title: details?.title ?? seed.title, year: details?.year ?? seed.year }),
       });
-      setMsg("Queued — 720p, downloading to your library.");
+      setMsg("Adding to your library — it'll be ready to watch shortly.");
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -173,7 +173,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         seasons: [season],
       }),
     });
-    setMsg(`Grabbing Season ${season} in the background — episodes appear in Downloads.`);
+    setMsg(`Adding Season ${season} to your library — episodes appear as they're ready.`);
   }
 
   async function downloadAllSeasons() {
@@ -198,7 +198,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         }),
       });
       setMsg(
-        `Grabbing ${seasons.length} season${seasons.length === 1 ? "" : "s"} in the background — episodes appear in Downloads.`,
+        `Adding ${seasons.length} season${seasons.length === 1 ? "" : "s"} to your library — episodes appear as they're ready.`,
       );
     } catch (e) {
       setMsg((e as Error).message);
@@ -385,7 +385,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                 ) : (
                   <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy}>
                     {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                    Download (720p)
+                    Add to my library
                   </button>
                 )
               ) : (
@@ -403,10 +403,10 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                     >
                       {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                       {allSeasonsOwned
-                        ? "All seasons in library"
+                        ? "All seasons in your library"
                         : releasedSeasons.length > 1
-                          ? `Download all ${releasedSeasons.length} seasons`
-                          : "Download season"}
+                          ? `Add all ${releasedSeasons.length} seasons`
+                          : "Add season to my library"}
                     </button>
                   )}
                   <div className="mb-3 flex items-center justify-between">

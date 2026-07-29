@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { DownloadStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/session";
 import { getConfig } from "@/lib/config";
@@ -29,6 +30,7 @@ interface Item {
   season: number | null;
   episode: number | null;
   status: string;
+  progress: number;
   sizeBytes: number;
   s3Key: string | null;
 }
@@ -40,17 +42,25 @@ interface Group {
   kind: string;
   tmdbId: number | null;
   genres: string[];
-  count: number;
+  count: number; // ready-to-watch files
+  downloading: boolean; // any part still being added
   sizeBytes: number;
   items: Item[];
 }
+
+const ACTIVE: DownloadStatus[] = ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"];
 
 /** Downloaded titles grouped for the poster library. */
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Ready-to-watch items (uploaded to S3) OR still being added — so the poster
+  // can show an "adding" indicator while a title downloads.
   const rows = await prisma.download.findMany({
-    where: { userId: user.id, s3Key: { not: null }, s3DeletedAt: null },
+    where: {
+      userId: user.id,
+      OR: [{ s3Key: { not: null }, s3DeletedAt: null }, { status: { in: ACTIVE } }],
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -68,13 +78,16 @@ export async function GET() {
         tmdbId: d.tmdbId,
         genres: [],
         count: 0,
+        downloading: false,
         sizeBytes: 0,
         items: [],
       };
       groups.set(key, g);
     }
     if (!g.posterUrl && d.posterUrl) g.posterUrl = d.posterUrl;
-    g.count += 1;
+    const active = ACTIVE.includes(d.status);
+    if (active) g.downloading = true;
+    else g.count += 1; // count only ready files
     g.sizeBytes += Number(d.sizeBytes);
     g.items.push({
       id: d.id,
@@ -82,6 +95,7 @@ export async function GET() {
       season: d.season,
       episode: d.episode,
       status: d.status,
+      progress: d.progress,
       sizeBytes: Number(d.sizeBytes),
       s3Key: d.s3Key,
     });

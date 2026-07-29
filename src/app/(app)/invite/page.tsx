@@ -63,8 +63,8 @@ export default function InvitePage() {
         </h1>
       </div>
       <p className="mb-6 text-sm text-muted">
-        Cinevault is invite-only. Generate a code, share the link, and once they apply the librarian approves
-        them — you&apos;ll be on record as the member who referred them.
+        Cinevault is invite-only. Generate a code, share the link, and once they apply the admin approves them —
+        you&apos;ll be recorded as their referrer.
       </p>
 
       <button className="btn btn-accent mb-6" onClick={generate} disabled={busy}>

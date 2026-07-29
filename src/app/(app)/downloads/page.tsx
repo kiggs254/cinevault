@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Download, ChevronDown, RotateCw, Trash2, Film, DownloadCloud, Shuffle, Loader2 } from "lucide-react";
+import { jsonFetch } from "@/lib/client";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { DownloadRow } from "@/components/downloads-panel";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -267,9 +269,19 @@ function GroupCard({
 }
 
 export default function DownloadsPage() {
+  const router = useRouter();
   const { downloads, loaded, retry, remove, resource } = useDownloadsCtx();
   const [filter, setFilter] = useState<Filter>("all");
   const [page, setPage] = useState(1);
+
+  // The raw download queue is an admin/operator view — members use Library.
+  useEffect(() => {
+    jsonFetch<{ role: string }>("/api/me")
+      .then((me) => {
+        if (me.role !== "admin") router.replace("/library");
+      })
+      .catch(() => {});
+  }, [router]);
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: downloads.length, active: 0, completed: 0, failed: 0 };

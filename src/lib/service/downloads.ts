@@ -556,8 +556,8 @@ export async function grabEpisode(o: {
     } catch {
       /* poster optional */
     }
-    const text = `⬇️ New episode grabbing\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`;
-    const buttons = [{ text: "📥 Downloads", path: "/downloads" }];
+    const text = `📥 Adding to your library\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`;
+    const buttons = [{ text: "📚 Open your library", path: "/library" }];
     if (o.userId) await notifyUser(o.userId, text, { photo, buttons });
     else await notify(text, { photo, buttons });
   }

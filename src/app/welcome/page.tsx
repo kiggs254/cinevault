@@ -109,7 +109,7 @@ export default function WelcomePage() {
 
         {status === "loading" && (
           <p className="flex items-center gap-2 text-sm text-faint">
-            <Loader2 size={15} className="animate-spin" /> Checking your membership…
+            <Loader2 size={15} className="animate-spin" /> Checking your status…
           </p>
         )}
 
@@ -126,12 +126,12 @@ export default function WelcomePage() {
         {status === "pending" && (
           <div>
             <p className="mb-2 flex items-center gap-2 font-semibold text-ink">
-              <Clock size={18} className="text-accent" /> Membership pending
+              <Clock size={18} className="text-accent" /> Waiting for approval
             </p>
             <p className="mb-5 text-sm text-muted">
-              Thanks{s?.username ? `, ${s.username}` : ""}! A member referred you and the librarian has been
-              notified. Your card will be issued once they approve you — this page updates automatically, so you
-              can leave it open.
+              Thanks{s?.username ? `, ${s.username}` : ""}! A member referred you and the admin has been
+              notified. You&apos;ll get access once they approve you — this page updates automatically, so you can
+              leave it open.
             </p>
 
             <div className="space-y-2">
@@ -157,7 +157,7 @@ export default function WelcomePage() {
 
         {status === "denied" && (
           <div>
-            <p className="mb-2 font-semibold text-ink">Membership declined</p>
+            <p className="mb-2 font-semibold text-ink">Access declined</p>
             <p className="text-sm text-muted">Reach out to the member who referred you if you think this is a mistake.</p>
           </div>
         )}
@@ -165,11 +165,11 @@ export default function WelcomePage() {
         {status === "active" && (
           <div>
             <p className="mb-1 flex items-center gap-2 text-lg font-semibold text-ink">
-              <CheckCircle2 size={20} style={{ color: "var(--color-success)" }} /> Welcome to the library
+              <CheckCircle2 size={20} style={{ color: "var(--color-success)" }} /> You&apos;re in
               {s?.username ? `, ${s.username}` : ""}!
             </p>
             <p className="mb-5 text-sm text-muted">
-              Your library card is ready. Here&apos;s how to start watching the collection.
+              Your account is ready. Here&apos;s how to start watching.
             </p>
 
             <ol className="space-y-5">
@@ -197,16 +197,16 @@ export default function WelcomePage() {
                 <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-border bg-surface-2 px-3 py-2">
                   <Globe size={15} className="flex-none text-faint" />
                   <code className="mono whitespace-nowrap text-sm text-ink">
-                    {s?.serverUrl || "ask the librarian for the server address"}
+                    {s?.serverUrl || "ask the admin for the server address"}
                   </code>
                 </div>
               </li>
 
               <li>
-                <p className="label mb-2">3 · Sign in with your card</p>
+                <p className="label mb-2">3 · Sign in</p>
                 <p className="text-sm text-muted">
-                  Use member name <span className="mono text-ink">{s?.username}</span> and the password you set
-                  when applying.
+                  Use username <span className="mono text-ink">{s?.username}</span> and the password you set when
+                  requesting access.
                 </p>
               </li>
             </ol>

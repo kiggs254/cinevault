@@ -215,7 +215,7 @@ export async function notifyOwnerNewRegistration(user: {
     }
     const referral = user.invitedBy ? `\nReferred by ${user.invitedBy}.` : "";
     await sendWithKeyboard(cfg.telegram.botToken, cfg.telegram.chatId, {
-      text: `🆕 New membership request: “${user.username}” wants to join.${referral}\nApprove to issue their library card (auto-creates their Jellyfin account).`,
+      text: `🆕 New access request: “${user.username}” wants to join.${referral}\nApprove to create their account (portal + Jellyfin).`,
       keyboard: rows,
     });
   } catch {

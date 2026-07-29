@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Search as SearchIcon } from "lucide-react";
+import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Loader2, Search as SearchIcon } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
@@ -12,6 +12,7 @@ interface Item {
   season: number | null;
   episode: number | null;
   status: string;
+  progress: number;
   sizeBytes: number;
   s3Key: string | null;
 }
@@ -24,14 +25,25 @@ interface TitleGroup {
   tmdbId: number | null;
   genres: string[];
   count: number;
+  downloading: boolean;
   sizeBytes: number;
   items: Item[];
 }
+
+const ACTIVE_ST = ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"];
 
 function epLabel(i: Item): string {
   if (i.season != null && i.episode != null) return `S${String(i.season).padStart(2, "0")}E${String(i.episode).padStart(2, "0")}`;
   if (i.season != null) return `Season ${i.season}`;
   return i.releaseName;
+}
+
+/** Highest progress among a group's still-adding files, for the poster badge. */
+function addingPct(t: TitleGroup): number | null {
+  const act = t.items.filter((i) => ACTIVE_ST.includes(i.status));
+  if (!act.length) return null;
+  const p = Math.max(...act.map((i) => i.progress || 0));
+  return p > 0 ? Math.round(p) : null;
 }
 
 export default function LibraryPage() {
@@ -76,12 +88,33 @@ export default function LibraryPage() {
     void load();
   }, [load]);
 
+  // While anything is still being added, refresh so progress advances and newly
+  // ready titles appear without a manual reload.
+  const anyDownloading = titles.some((t) => t.downloading);
+  useEffect(() => {
+    if (!anyDownloading) return;
+    const t = setInterval(() => void load(), 8000);
+    return () => clearInterval(t);
+  }, [anyDownloading, load]);
+
   async function open(key: string) {
     try {
       const { url } = await jsonFetch<{ url: string }>(`/api/library?presign=${encodeURIComponent(key)}`);
       window.open(url, "_blank", "noopener");
     } catch (e) {
       setErr((e as Error).message);
+    }
+  }
+
+  async function openJellyfin(g: TitleGroup) {
+    if (!g.tmdbId) return;
+    try {
+      const { url } = await jsonFetch<{ url: string }>(
+        `/api/jellyfin/resolve?tmdbId=${g.tmdbId}&type=${g.kind === "TV" ? "tv" : "movie"}`,
+      );
+      window.open(url, "_blank", "noopener");
+    } catch {
+      setErr("Not on Jellyfin yet — give the library a minute to catch up.");
     }
   }
 
@@ -105,7 +138,8 @@ export default function LibraryPage() {
         <p className="text-sm text-faint">Loading…</p>
       ) : titles.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-faint">
-          Nothing downloaded yet. Downloads appear here once they finish uploading to S3.
+          Your library is empty. Add a film or show from Discover or Search and it&apos;ll appear here, ready to
+          watch.
         </p>
       ) : (
         <>
@@ -170,10 +204,23 @@ export default function LibraryPage() {
                         {t.kind === "TV" ? <Tv size={22} /> : <Film size={22} />}
                       </div>
                     )}
-                    <span className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t.count}</span>
+                    {t.count > 0 && (
+                      <span className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t.count}</span>
+                    )}
+                    {t.downloading && (
+                      <span className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1 rounded-full bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                        <Loader2 size={10} className="animate-spin" />
+                        {(() => {
+                          const p = addingPct(t);
+                          return p != null ? `Adding ${p}%` : "Adding…";
+                        })()}
+                      </span>
+                    )}
                   </div>
                   <p className="mt-1.5 truncate text-xs text-ink">{t.title}</p>
-                  <p className="mono truncate text-[11px] text-faint">{formatBytes(t.sizeBytes)}</p>
+                  <p className="mono truncate text-[11px] text-faint">
+                    {t.downloading && t.count === 0 ? "Adding to your library…" : formatBytes(t.sizeBytes)}
+                  </p>
                 </button>
               ))}
             </div>
@@ -202,6 +249,14 @@ export default function LibraryPage() {
                 <X size={18} />
               </button>
             </div>
+            {active.tmdbId && active.count > 0 && (
+              <div className="border-b border-border p-4">
+                <button className="btn btn-accent w-full" onClick={() => openJellyfin(active)}>
+                  <Play size={15} /> Play on Jellyfin
+                </button>
+                <p className="mt-2 text-center text-[11px] text-faint">Opens in the Jellyfin app / web player.</p>
+              </div>
+            )}
             {active.kind === "TV" && active.tmdbId ? (
               <div className="p-4">
                 <EpisodeBrowser

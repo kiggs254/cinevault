@@ -649,10 +649,10 @@ async function processDownload(id: string): Promise<void> {
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
       : "";
   {
-    const doneText = `✅ Downloaded\n${organized.cleanTitle}${seLabel}`;
+    const doneText = `🍿 Ready to watch\n${organized.cleanTitle}${seLabel}`;
     const doneOpts = {
       photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
-      buttons: [{ text: "▶️ Open in Cinevault", path: "/library" }],
+      buttons: [{ text: "▶️ Open your library", path: "/library" }],
     };
     if (dl.userId) await notifyUser(dl.userId, doneText, doneOpts);
     else await notify(doneText, doneOpts);
@@ -786,9 +786,9 @@ const grabWorker = new Worker<DownloadJobData>(
         });
         console.log(`[grab] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
         if (r.queued > 0) {
-          const what = r.mode === "pack" ? "the season pack" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
-          const text = `📥 ${g.title} — Season ${g.season}: queued ${what}.`;
-          const opts = { buttons: [{ text: "📥 View downloads", path: "/downloads" }] };
+          const what = r.mode === "pack" ? "the full season" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
+          const text = `📥 Adding ${g.title} — Season ${g.season} to your library (${what}).`;
+          const opts = { buttons: [{ text: "📚 Open your library", path: "/library" }] };
           if (g.userId) await notifyUser(g.userId, text, opts);
           else await notify(text, opts);
         }

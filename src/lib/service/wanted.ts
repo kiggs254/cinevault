@@ -78,8 +78,8 @@ export async function scanWantedMovies(): Promise<{ scanned: number; grabbed: nu
           data: { status: "grabbed", lastCheckedAt: new Date() },
         });
         grabbed++;
-        const text = `🎬 “${w.title}” is available — downloading now.`;
-        const opts = { photo: w.posterUrl, buttons: [{ text: "View downloads", path: "/downloads" }] };
+        const text = `📥 “${w.title}” just became available — adding it to your library now.`;
+        const opts = { photo: w.posterUrl, buttons: [{ text: "📚 Open your library", path: "/library" }] };
         if (w.userId) await notifyUser(w.userId, text, opts);
         else await notify(text, opts);
       } else {

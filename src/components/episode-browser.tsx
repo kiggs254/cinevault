@@ -168,14 +168,14 @@ export function EpisodeBrowser({
             <Download size={14} />
           )}
           {seasonBusy
-            ? "Queuing…"
+            ? "Adding…"
             : queuedSeasons.has(active)
               ? mode === "library"
-                ? "Grabbing — see Assistant tab"
-                : `Season ${active} queued — grabbing in background`
+                ? "Adding to your library…"
+                : `Season ${active} — adding to your library`
               : mode === "library"
-                ? "Grab missing episodes"
-                : `Download all of Season ${active}`}
+                ? "Add missing episodes"
+                : `Add all of Season ${active}`}
         </button>
       )}
 
@@ -238,12 +238,12 @@ export function EpisodeBrowser({
                     </button>
                   ) : e.owned ? (
                     completed ? (
-                      <span className="flex-none text-success" title="Downloaded">
+                      <span className="flex-none text-success" title="Ready to watch">
                         <DownloadCloud size={15} />
                       </span>
                     ) : (
                       <span className="flex items-center gap-1 text-[11px] text-accent">
-                        <Loader2 size={12} className="animate-spin" /> Downloading
+                        <Loader2 size={12} className="animate-spin" /> Adding…
                       </span>
                     )
                   ) : onDownloadEpisode ? (
@@ -257,7 +257,7 @@ export function EpisodeBrowser({
                       ) : (
                         <Download size={13} />
                       )}
-                      {mode === "library" ? "Get" : ""}
+                      Add
                     </button>
                   ) : (
                     <span className="text-[11px] text-danger/80">Missing</span>

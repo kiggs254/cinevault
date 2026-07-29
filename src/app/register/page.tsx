@@ -57,8 +57,7 @@ export default function RegisterPage() {
             CINE<span className="text-accent">VAULT</span>
           </h1>
           <p className="mt-3 text-sm text-muted">
-            A private film &amp; TV library. Membership is invite-only — enter the code a member shared with
-            you.
+            A private film &amp; TV library. Invite-only — enter the code a member shared with you.
           </p>
         </div>
 
@@ -80,7 +79,7 @@ export default function RegisterPage() {
         </div>
 
         <label className="label mb-2 block" htmlFor="username">
-          Choose a member name
+          Choose a username
         </label>
         <div className="relative mb-4">
           <UserIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -111,8 +110,7 @@ export default function RegisterPage() {
           />
         </div>
         <p className="mt-2 text-xs text-faint">
-          This member name &amp; password are your library card — they sign you in here and on Jellyfin, where
-          you&apos;ll watch.
+          This username &amp; password sign you in here and on Jellyfin, where you&apos;ll watch.
         </p>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
@@ -123,13 +121,13 @@ export default function RegisterPage() {
             </>
           ) : (
             <>
-              Apply for membership <ArrowRight size={15} />
+              Request access <ArrowRight size={15} />
             </>
           )}
         </button>
 
         <p className="mt-5 text-center text-xs text-faint">
-          Already a member?{" "}
+          Already have an account?{" "}
           <Link href="/login" className="text-accent hover:underline">
             Sign in
           </Link>

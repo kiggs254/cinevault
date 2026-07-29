@@ -29,20 +29,33 @@ const BASE_NAV = [
   { href: "/", label: "Home", icon: Home },
   { href: "/search", label: "Search", icon: SearchIcon },
   { href: "/library", label: "Library", icon: Library },
-  { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
   { href: "/invite", label: "Invite", icon: Ticket },
 ];
 
-/** Admins additionally manage members + settings. */
+/** Admins additionally see the raw download queue, members list, and settings. */
 function navFor(role?: string) {
   const items = [...BASE_NAV];
   if (role === "admin") {
+    items.push({ href: "/downloads", label: "Downloads", icon: Download });
     items.push({ href: "/users", label: "Members", icon: Users });
     items.push({ href: "/settings", label: "Settings", icon: Settings2 });
   }
   return items;
+}
+
+/** Mobile bottom tabs — members swap the admin-only Downloads tab for Invite. */
+function bottomFor(role?: string) {
+  return [
+    { href: "/", label: "Home", icon: Home },
+    { href: "/discover", label: "Discover", icon: Compass },
+    role === "admin"
+      ? { href: "/downloads", label: "Downloads", icon: Download }
+      : { href: "/invite", label: "Invite", icon: Ticket },
+    { href: "/library", label: "Library", icon: Library },
+    { href: "/chat", label: "Assistant", icon: Sparkles },
+  ];
 }
 
 interface Me {
@@ -69,15 +82,6 @@ async function connectTelegram(): Promise<void> {
     /* best-effort */
   }
 }
-
-// Primary tabs for the mobile bottom bar (Settings + sign-out live in the top bar).
-const BOTTOM = [
-  { href: "/", label: "Home", icon: Home },
-  { href: "/discover", label: "Discover", icon: Compass },
-  { href: "/downloads", label: "Downloads", icon: Download },
-  { href: "/library", label: "Library", icon: Library },
-  { href: "/chat", label: "Assistant", icon: Sparkles },
-];
 
 const ACTIVE_STATUSES = ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"];
 
@@ -335,10 +339,11 @@ export function MobileTopBar() {
 /* ---------------------------- Mobile bottom tabs --------------------------- */
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const me = useMe();
   const activeCount = useActiveCount();
   return (
     <nav className="z-40 flex flex-none items-stretch justify-around border-t border-border bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg md:hidden">
-      {BOTTOM.map(({ href, label, icon: Icon }) => {
+      {bottomFor(me?.role).map(({ href, label, icon: Icon }) => {
         const active = isActive(href, pathname);
         return (
           <Link
