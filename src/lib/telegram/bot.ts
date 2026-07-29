@@ -14,6 +14,8 @@ import { runAgent, type AgentEvent, type AgentMessage, type AgentOption } from "
 import { identifyPoster } from "../llm/vision";
 import { createDownload, grabMovie } from "../service/downloads";
 import { enqueueSeasonGrab } from "../queue";
+import { prisma } from "../db";
+import { userByChatId, bindTelegramChat, approveUser, denyUser } from "../service/users";
 import {
   searchTitle,
   getMovieDetails,
@@ -27,11 +29,15 @@ const pending = new Map<number, AgentOption[]>();
 const warned = new Set<number>(); // unauthorized chats we've already replied to once
 let running = false;
 
-/** Owner (auto-linked on first message) or an allow-listed family member. */
-function isAuthorized(cfg: ResolvedConfig, chatId: number | string): boolean {
-  const id = String(chatId);
-  if (cfg.telegram.chatId && id === String(cfg.telegram.chatId)) return true;
-  return cfg.telegram.allowedIds.includes(id);
+/** Is this chat the configured owner (notification target + admin)? */
+function isOwner(cfg: ResolvedConfig, chatId: number | string): boolean {
+  return !!cfg.telegram.chatId && String(chatId) === String(cfg.telegram.chatId);
+}
+
+/** The admin user's id — bot actions from the owner chat attribute to it. */
+async function adminUserId(): Promise<string | null> {
+  const admin = await prisma.user.findFirst({ where: { role: "admin" }, select: { id: true } });
+  return admin?.id ?? null;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -87,42 +93,68 @@ async function handle(u: TgUpdate): Promise<void> {
   if (u.callback_query) {
     const chatId = u.callback_query.message?.chat.id;
     if (chatId == null) return;
-    if (!isAuthorized(cfg, chatId)) return;
-    await handleCallback(token, chatId, u.callback_query);
+    const ownerChat = isOwner(cfg, chatId);
+    const member = ownerChat ? null : await userByChatId(String(chatId));
+    if (!ownerChat && !member) return;
+    const userId = member?.id ?? (ownerChat ? await adminUserId() : null);
+    await handleCallback(token, chatId, u.callback_query, { ownerChat, userId });
     return;
   }
 
   const msg = u.message;
   if (!msg) return;
   const chatId = msg.chat.id;
+  const text = msg.text?.trim() ?? "";
+
+  // Deep link from the portal/welcome page: bind this chat to an approved account.
+  if (text.startsWith("/start ")) {
+    const payload = text.slice(7).trim();
+    if (payload.startsWith("lnk_")) {
+      const linked = await bindTelegramChat(payload, String(chatId));
+      await sendMessage(
+        token,
+        chatId,
+        linked
+          ? `✅ Linked to “${linked.username}”. Your downloads notify you here, and you can grab titles by chatting with me.`
+          : "That link is invalid or expired. Open the portal and tap “Connect Telegram” again.",
+      );
+      return;
+    }
+  }
 
   // First chat to talk claims the owner slot (notification target + admin).
+  let ownerChat = isOwner(cfg, chatId);
   if (!cfg.telegram.chatId) {
     await saveConfig({ telegramChatId: String(chatId) });
+    ownerChat = true;
     await sendMessage(
       token,
       chatId,
       "✅ Linked! Send me a movie or TV poster and I'll identify it, score it against your taste, and offer a one-tap download. Or just type “download Dune Part Two 4k”.",
     );
-  } else if (!isAuthorized(cfg, chatId)) {
-    // Not the owner and not allow-listed — tell them once how to get access.
+  }
+
+  const member = ownerChat ? null : await userByChatId(String(chatId));
+  if (!ownerChat && !member) {
+    // Not the owner and not a linked member — tell them once how to get access.
     if (!warned.has(chatId)) {
       warned.add(chatId);
       await sendMessage(
         token,
         chatId,
-        `🔒 This is a private bot. Ask the owner to add your Telegram ID ${chatId} to the allow-list in Settings.`,
+        "🔒 This is a private bot. Register on the portal — once you're approved, tap “Connect Telegram” to link this chat.",
       );
     }
     return;
   }
+  const userId = member?.id ?? (ownerChat ? await adminUserId() : null);
 
   if (msg.photo?.length) {
     await handlePhoto(token, chatId, msg.photo);
     return;
   }
   if (msg.text) {
-    await handleText(token, chatId, msg.text.trim());
+    await handleText(token, chatId, msg.text.trim(), userId);
   }
 }
 
@@ -219,14 +251,38 @@ function releasedSeasons(d: TmdbTvDetails): number[] {
     .map((s) => s.seasonNumber);
 }
 
-async function handleCallback(token: string, chatId: number, cq: TgCallbackQuery): Promise<void> {
+async function handleCallback(
+  token: string,
+  chatId: number,
+  cq: TgCallbackQuery,
+  ctx: { ownerChat: boolean; userId: string | null },
+): Promise<void> {
   await answerCallback(token, cq.id);
+  const data = cq.data ?? "";
+
+  // Owner-only: approve/deny a pending registration.
+  if (data.startsWith("usr:")) {
+    if (!ctx.ownerChat) return;
+    const [, action, id] = data.split(":");
+    if (action === "approve") {
+      const r = await approveUser(id);
+      await sendMessage(
+        token,
+        chatId,
+        r.ok ? "✅ Approved — their Jellyfin account is ready." : `⚠️ ${r.error}`,
+      );
+    } else if (action === "deny") {
+      await denyUser(id);
+      await sendMessage(token, chatId, "⛔ Denied.");
+    }
+    return;
+  }
+
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey) {
     await sendMessage(token, chatId, "TMDB isn't configured — add a key in Settings.");
     return;
   }
-  const data = cq.data ?? "";
 
   // Movie → grab straight away.
   if (data.startsWith("dl:movie:")) {
@@ -237,7 +293,7 @@ async function handleCallback(token: string, chatId: number, cq: TgCallbackQuery
       return;
     }
     await sendMessage(token, chatId, `🔎 Finding the best release for ${d.title}…`);
-    const dl = await grabMovie({ tmdbId, title: d.title, year: d.year ?? null });
+    const dl = await grabMovie({ tmdbId, title: d.title, year: d.year ?? null, userId: ctx.userId });
     await sendMessage(
       token,
       chatId,
@@ -286,7 +342,14 @@ async function handleCallback(token: string, chatId: number, cq: TgCallbackQuery
     }
     const targets = sel === "all" ? releasedSeasons(d) : [Number(sel)];
     for (const season of targets) {
-      await enqueueSeasonGrab({ tmdbId, title: d.title, year: d.year ?? null, season, notify: false });
+      await enqueueSeasonGrab({
+        tmdbId,
+        title: d.title,
+        year: d.year ?? null,
+        season,
+        notify: false,
+        userId: ctx.userId,
+      });
     }
     await sendMessage(
       token,
@@ -302,7 +365,12 @@ async function handleCallback(token: string, chatId: number, cq: TgCallbackQuery
 /* --------------------------------- text ----------------------------------- */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function downloadOption(token: string, chatId: number, opt: AgentOption): Promise<void> {
+async function downloadOption(
+  token: string,
+  chatId: number,
+  opt: AgentOption,
+  userId: string | null,
+): Promise<void> {
   const d = opt.download as any;
   try {
     const dl = await createDownload({
@@ -318,6 +386,7 @@ async function downloadOption(token: string, chatId: number, opt: AgentOption): 
       season: d.plan?.season,
       episode: d.plan?.episode,
       query: d.query,
+      userId,
     });
     await sendMessage(token, chatId, `⬇️ Downloading: ${dl.title}`);
   } catch (e) {
@@ -326,7 +395,12 @@ async function downloadOption(token: string, chatId: number, opt: AgentOption): 
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-async function handleText(token: string, chatId: number, text: string): Promise<void> {
+async function handleText(
+  token: string,
+  chatId: number,
+  text: string,
+  userId: string | null,
+): Promise<void> {
   if (text === "/start" || text === "/help") {
     await sendMessage(
       token,
@@ -341,7 +415,7 @@ async function handleText(token: string, chatId: number, text: string): Promise<
   if (Number.isInteger(num) && num > 0 && pending.has(chatId)) {
     const opt = pending.get(chatId)![num - 1];
     if (opt) {
-      await downloadOption(token, chatId, opt);
+      await downloadOption(token, chatId, opt, userId);
       pending.delete(chatId);
       return;
     }

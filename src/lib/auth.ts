@@ -8,11 +8,12 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(env.AUTH_SECRET);
 }
 
-export async function createSession(): Promise<string> {
-  return new SignJWT({ role: "admin" })
+export async function createSession(claims: { userId: string; role: string }): Promise<string> {
+  return new SignJWT({ role: claims.role })
     .setProtectedHeader({ alg: "HS256" })
+    .setSubject(claims.userId)
     .setIssuedAt()
-    .setExpirationTime("30d")
+    .setExpirationTime("7d")
     .sign(secret());
 }
 

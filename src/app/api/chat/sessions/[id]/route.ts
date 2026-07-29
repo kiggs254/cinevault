@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,8 +9,10 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, { params }: Ctx) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const s = await prisma.chatSession.findUnique({ where: { id } });
+  const s = await prisma.chatSession.findFirst({ where: { id, userId: user.id } });
   if (!s) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(
     { session: { id: s.id, title: s.title, items: s.items ?? [] } },
@@ -18,7 +21,14 @@ export async function GET(_req: Request, { params }: Ctx) {
 }
 
 export async function PUT(req: Request, { params }: Ctx) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  const existing = await prisma.chatSession.findFirst({
+    where: { id, userId: user.id },
+    select: { id: true },
+  });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const body = (await req.json().catch(() => ({}))) as { items?: unknown; title?: string };
   const data: Prisma.ChatSessionUpdateInput = {};
   if (body.items !== undefined) data.items = body.items as Prisma.InputJsonValue;
@@ -34,7 +44,14 @@ export async function PUT(req: Request, { params }: Ctx) {
 }
 
 export async function DELETE(_req: Request, { params }: Ctx) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  const existing = await prisma.chatSession.findFirst({
+    where: { id, userId: user.id },
+    select: { id: true },
+  });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await prisma.chatSession.delete({ where: { id } }).catch(() => {});
   return NextResponse.json({ ok: true });
 }

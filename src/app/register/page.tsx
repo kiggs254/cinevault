@@ -3,9 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clapperboard, Lock, User as UserIcon, Loader2, ArrowRight } from "lucide-react";
+import { Clapperboard, User as UserIcon, Lock, Loader2, ArrowRight } from "lucide-react";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -16,24 +16,26 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const res = await fetch("/api/auth/login", {
+    const code =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("code") ?? undefined
+        : undefined;
+    const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, code }),
     });
-    if (res.ok) {
-      router.replace("/");
-      router.refresh();
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.statusToken) {
+      router.replace(`/welcome?token=${data.statusToken}`);
     } else {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Login failed");
+      setError(data.error ?? "Registration failed");
       setLoading(false);
     }
   }
 
   return (
     <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden p-6">
-      {/* Ambient projector glow */}
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-1/3 h-[38rem] w-[38rem] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-40 blur-[130px]"
@@ -51,17 +53,14 @@ export default function LoginPage() {
           >
             CINE<span className="text-accent">VAULT</span>
           </h1>
-          <p className="mt-3 text-sm text-muted">Your AI-curated film &amp; TV vault.</p>
+          <p className="mt-3 text-sm text-muted">Request access to the community library.</p>
         </div>
 
         <label className="label mb-2 block" htmlFor="username">
-          Username
+          Choose a username
         </label>
         <div className="relative mb-4">
-          <UserIcon
-            size={16}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"
-          />
+          <UserIcon size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <input
             id="username"
             type="text"
@@ -71,45 +70,45 @@ export default function LoginPage() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             className="input pl-9"
-            placeholder="your-username"
+            placeholder="3–20 chars: a–z, 0–9, _"
           />
         </div>
 
         <label className="label mb-2 block" htmlFor="pw">
-          Password
+          Choose a password
         </label>
         <div className="relative">
-          <Lock
-            size={16}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint"
-          />
+          <Lock size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <input
             id="pw"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="input pl-9"
-            placeholder="••••••••••••"
+            placeholder="At least 6 characters"
           />
         </div>
+        <p className="mt-2 text-xs text-faint">
+          You&apos;ll use these same credentials to sign in to Jellyfin on your devices.
+        </p>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
         <button type="submit" disabled={loading} className="btn btn-accent mt-6 w-full">
           {loading ? (
             <>
-              <Loader2 size={15} className="animate-spin" /> Authenticating…
+              <Loader2 size={15} className="animate-spin" /> Submitting…
             </>
           ) : (
             <>
-              Enter <ArrowRight size={15} />
+              Request access <ArrowRight size={15} />
             </>
           )}
         </button>
 
         <p className="mt-5 text-center text-xs text-faint">
-          Have an invite?{" "}
-          <Link href="/register" className="text-accent hover:underline">
-            Request access
+          Already a member?{" "}
+          <Link href="/login" className="text-accent hover:underline">
+            Sign in
           </Link>
         </p>
       </form>

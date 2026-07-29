@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,10 @@ export const dynamic = "force-dynamic";
  * cards as already in the library.
  */
 export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const rows = await prisma.download.findMany({
-    where: { status: "COMPLETED", tmdbId: { not: null } },
+    where: { userId: user.id, status: "COMPLETED", tmdbId: { not: null } },
     select: { tmdbId: true },
     distinct: ["tmdbId"],
   });

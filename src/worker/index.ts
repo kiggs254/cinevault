@@ -11,9 +11,10 @@ import { scanWatches } from "../lib/service/watches";
 import { scanFollowedShows, autoFollowFromJellyfin } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
 import { scanWantedMovies } from "../lib/service/wanted";
+import { ensureBootstrapAdmin } from "../lib/service/users";
 import { runRetention } from "../lib/service/retention";
 import { startTelegramBot } from "../lib/telegram/bot";
-import { notify } from "../lib/telegram/client";
+import { notify, notifyUser } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig, type ResolvedConfig } from "../lib/config";
 import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
@@ -647,10 +648,15 @@ async function processDownload(id: string): Promise<void> {
     organized.season != null
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
       : "";
-  await notify(`✅ Downloaded\n${organized.cleanTitle}${seLabel}`, {
-    photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
-    buttons: [{ text: "▶️ Open in Cinevault", path: "/library" }],
-  });
+  {
+    const doneText = `✅ Downloaded\n${organized.cleanTitle}${seLabel}`;
+    const doneOpts = {
+      photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
+      buttons: [{ text: "▶️ Open in Cinevault", path: "/library" }],
+    };
+    if (dl.userId) await notifyUser(dl.userId, doneText, doneOpts);
+    else await notify(doneText, doneOpts);
+  }
   void logActivity(`✓ ${organized.cleanTitle}${seLabel} added to your library`, {
     kind: "done",
     title: organized.cleanTitle,
@@ -776,13 +782,15 @@ const grabWorker = new Worker<DownloadJobData>(
           year: g.year,
           indexerIds: g.indexerIds,
           notify: g.notify,
+          userId: g.userId,
         });
         console.log(`[grab] season-grab ${g.title} S${g.season}: ${JSON.stringify(r)}`);
         if (r.queued > 0) {
           const what = r.mode === "pack" ? "the season pack" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
-          await notify(`📥 ${g.title} — Season ${g.season}: queued ${what}.`, {
-            buttons: [{ text: "📥 View downloads", path: "/downloads" }],
-          });
+          const text = `📥 ${g.title} — Season ${g.season}: queued ${what}.`;
+          const opts = { buttons: [{ text: "📥 View downloads", path: "/downloads" }] };
+          if (g.userId) await notifyUser(g.userId, text, opts);
+          else await notify(text, opts);
         }
       } catch (e) {
         console.error(`[grab] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);
@@ -855,6 +863,10 @@ async function configureQbittorrent(): Promise<void> {
 
 worker.on("ready", () => {
   console.log(`[worker] ready — downloads×${DOWNLOAD_CONCURRENCY}, grabs×${GRAB_CONCURRENCY}`);
+  // Seed the bootstrap admin + adopt any legacy ownerless rows before scans run.
+  void ensureBootstrapAdmin()
+    .then(() => console.log("[worker] bootstrap admin ensured"))
+    .catch((e) => console.error("[worker] bootstrap admin failed:", (e as Error).message));
   void configureQbittorrent();
   void recoverInterrupted();
   void schedulePeriodicJobs()

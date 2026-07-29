@@ -130,6 +130,7 @@ export interface SeasonGrabData {
   season: number;
   indexerIds?: number[];
   notify?: boolean;
+  userId?: string | null; // requesting member (null = admin/legacy)
 }
 
 export interface EpisodeGrabData {
@@ -141,6 +142,7 @@ export interface EpisodeGrabData {
   name?: string | null;
   indexerIds?: number[];
   notify?: boolean;
+  userId?: string | null;
 }
 export interface DownloadJobData {
   downloadId: string;

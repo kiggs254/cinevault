@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getTvDetails, getMovieDetails } from "@/lib/metadata/tmdb";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Detail payload for the title modal: overview, backdrop, and (TV) seasons. */
 export async function GET(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey) return NextResponse.json({ error: "TMDB not configured" }, { status: 400 });
   const url = new URL(req.url);
@@ -17,7 +20,7 @@ export async function GET(req: Request) {
 
   // Which seasons/movies are already downloaded (for the UI to show "owned").
   const owned = await prisma.download.findMany({
-    where: { tmdbId: id, status: { notIn: ["FAILED", "CANCELLED"] } },
+    where: { userId: user.id, tmdbId: id, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { season: true, episode: true, kind: true },
   });
   const ownedMovie = owned.some((o) => o.kind === "MOVIE");
@@ -38,13 +41,13 @@ export async function GET(req: Request) {
   if (type === "movie") {
     const d = await getMovieDetails(cfg.tmdb.apiKey, id);
     if (!d) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const wanted = await prisma.wantedMovie.findUnique({ where: { tmdbId: id }, select: { status: true } });
+    const wanted = await prisma.wantedMovie.findFirst({ where: { tmdbId: id, userId: user.id }, select: { status: true } });
     return NextResponse.json({ details: { ...d, ownedMovie, subscribed: !!wanted } });
   }
 
   const d = await getTvDetails(cfg.tmdb.apiKey, id);
   if (!d) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const follow = await prisma.followedShow.findUnique({ where: { tmdbId: id }, select: { id: true } });
+  const follow = await prisma.followedShow.findFirst({ where: { tmdbId: id, userId: user.id }, select: { id: true } });
   const today = new Date().toISOString().slice(0, 10);
   const seasons = d.seasons.map((s) => {
     const ownedEps = epsBySeason.get(s.seasonNumber)?.size ?? 0;

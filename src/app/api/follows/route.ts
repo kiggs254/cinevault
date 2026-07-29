@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 import { followShow } from "@/lib/service/follows";
 import { enqueueJob } from "@/lib/queue";
 import { getConfig } from "@/lib/config";
@@ -9,7 +10,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const shows = await prisma.followedShow.findMany({ orderBy: { createdAt: "desc" } });
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const shows = await prisma.followedShow.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+  });
 
   // Backfill posters for follows created without one (auto-follow / season-grab),
   // and persist them so the grid isn't full of placeholders.
@@ -49,6 +55,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const b = (await req.json().catch(() => ({}))) as {
     tmdbId?: number;
     autoDownload?: boolean;
@@ -60,6 +68,7 @@ export async function POST(req: Request) {
     source: "manual",
     autoDownload: b.autoDownload !== false,
     quality: typeof b.quality === "string" ? b.quality : "any",
+    userId: user.id,
   });
   if (!show) return NextResponse.json({ error: "Could not resolve show on TMDB" }, { status: 400 });
   void enqueueJob("follow-scan"); // grab any already-aired episodes right away

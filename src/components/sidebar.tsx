@@ -15,6 +15,8 @@ import {
   Search as SearchIcon,
   Magnet,
   HardDrive,
+  Users,
+  Send,
   type LucideIcon,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
@@ -22,15 +24,49 @@ import { useDownloadsCtx } from "@/components/downloads-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SearchOverlay } from "@/components/search-overlay";
 
-const NAV = [
+const BASE_NAV = [
   { href: "/", label: "Home", icon: Home },
   { href: "/search", label: "Search", icon: SearchIcon },
   { href: "/library", label: "Library", icon: Library },
   { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
-  { href: "/settings", label: "Settings", icon: Settings2 },
 ];
+
+/** Admins additionally manage members + settings. */
+function navFor(role?: string) {
+  const items = [...BASE_NAV];
+  if (role === "admin") {
+    items.push({ href: "/users", label: "Members", icon: Users });
+    items.push({ href: "/settings", label: "Settings", icon: Settings2 });
+  }
+  return items;
+}
+
+interface Me {
+  username: string;
+  role: string;
+  telegramLinked: boolean;
+}
+
+function useMe(): Me | null {
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    jsonFetch<Me>("/api/me")
+      .then(setMe)
+      .catch(() => setMe(null));
+  }, []);
+  return me;
+}
+
+async function connectTelegram(): Promise<void> {
+  try {
+    const d = await jsonFetch<{ url?: string }>("/api/telegram/link", { method: "POST" });
+    if (d.url && typeof window !== "undefined") window.open(d.url, "_blank", "noopener");
+  } catch {
+    /* best-effort */
+  }
+}
 
 // Primary tabs for the mobile bottom bar (Settings + sign-out live in the top bar).
 const BOTTOM = [
@@ -65,13 +101,14 @@ interface MaskedConfig {
   secretsSet: Record<string, boolean>;
 }
 
-function useSystems() {
+function useSystems(enabled: boolean) {
   const [cfg, setCfg] = useState<MaskedConfig | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     jsonFetch<MaskedConfig>("/api/settings")
       .then(setCfg)
       .catch(() => setCfg(null));
-  }, []);
+  }, [enabled]);
   const s = cfg?.settings ?? {};
   const sec = cfg?.secretsSet ?? {};
   const systems: { label: string; ok: boolean; icon: LucideIcon }[] = [
@@ -107,10 +144,18 @@ function Wordmark({ compact }: { compact?: boolean }) {
 }
 
 /* --------------------------------- Nav list -------------------------------- */
-function NavList({ pathname, activeCount }: { pathname: string; activeCount: number }) {
+function NavList({
+  pathname,
+  activeCount,
+  items,
+}: {
+  pathname: string;
+  activeCount: number;
+  items: { href: string; label: string; icon: LucideIcon }[];
+}) {
   return (
     <nav className="flex flex-col gap-1">
-      {NAV.map(({ href, label, icon: Icon }) => {
+      {items.map(({ href, label, icon: Icon }) => {
         const active = isActive(href, pathname);
         return (
           <Link
@@ -150,7 +195,9 @@ function NavList({ pathname, activeCount }: { pathname: string; activeCount: num
 /* ------------------------------- Desktop rail ------------------------------ */
 export function Sidebar() {
   const pathname = usePathname();
-  const systems = useSystems();
+  const me = useMe();
+  const isAdminUser = me?.role === "admin";
+  const systems = useSystems(!!isAdminUser);
   const okCount = systems.filter((s) => s.ok).length;
   const activeCount = useActiveCount();
   const logout = useLogout();
@@ -162,9 +209,27 @@ export function Sidebar() {
         <p className="label mt-2">AI Media Deck</p>
       </div>
 
-      <NavList pathname={pathname} activeCount={activeCount} />
+      <NavList pathname={pathname} activeCount={activeCount} items={navFor(me?.role)} />
 
       <div className="mt-auto space-y-4">
+        {me && (
+          <div className="flex items-center justify-between gap-2 px-1">
+            <span className="min-w-0 truncate text-xs text-muted">
+              @{me.username}
+              {isAdminUser && <span className="badge badge-accent ml-1.5">admin</span>}
+            </span>
+            {!me.telegramLinked && (
+              <button
+                onClick={connectTelegram}
+                className="inline-flex flex-none items-center gap-1 text-xs text-faint hover:text-accent"
+                title="Get download alerts + grab titles from Telegram"
+              >
+                <Send size={12} /> Connect
+              </button>
+            )}
+          </div>
+        )}
+        {isAdminUser && (
         <div className="card p-3">
           <div className="mb-2.5 flex items-center justify-between">
             <p className="label">Systems</p>
@@ -214,6 +279,7 @@ export function Sidebar() {
             })}
           </div>
         </div>
+        )}
         <div className="flex items-center gap-2">
           <button onClick={logout} className="btn btn-ghost flex-1 text-muted">
             <LogOut size={16} /> Sign out
@@ -229,6 +295,7 @@ export function Sidebar() {
 export function MobileTopBar() {
   const pathname = usePathname();
   const logout = useLogout();
+  const me = useMe();
   const [searchOpen, setSearchOpen] = useState(false);
   return (
     <>
@@ -239,13 +306,20 @@ export function MobileTopBar() {
             <SearchIcon size={19} />
           </button>
           <ThemeToggle size={19} className="rounded-lg p-2 text-muted" />
-          <Link
-            href="/settings"
-            aria-label="Settings"
-            className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
-          >
-            <Settings2 size={19} />
-          </Link>
+          {me && !me.telegramLinked && (
+            <button onClick={connectTelegram} aria-label="Connect Telegram" className="rounded-lg p-2 text-muted">
+              <Send size={19} />
+            </button>
+          )}
+          {me?.role === "admin" && (
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
+            >
+              <Settings2 size={19} />
+            </Link>
+          )}
           <button onClick={logout} aria-label="Sign out" className="rounded-lg p-2 text-muted">
             <LogOut size={19} />
           </button>

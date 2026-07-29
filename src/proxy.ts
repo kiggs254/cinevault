@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
 // Public paths that never require a session.
-const PUBLIC_PAGES = ["/login"];
-const PUBLIC_API = ["/api/auth/login", "/api/health"];
+const PUBLIC_PAGES = ["/login", "/register", "/welcome"];
+const PUBLIC_API = ["/api/auth/login", "/api/auth/register", "/api/auth/status", "/api/health"];
 
 const COOKIE = "moviehub_session";
 

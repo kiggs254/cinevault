@@ -74,11 +74,32 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
   await refreshTasteProfile();
   const profile = (await getConfig()).tasteProfile;
 
+  // Personal feeds: build recommendations for each active member from THEIR own
+  // downloads, follows and Jellyfin watch history.
+  const users = await prisma.user.findMany({
+    where: { status: "active" },
+    select: { id: true, jellyfinUserId: true },
+  });
+  let total = 0;
+  for (const u of users) {
+    total += await recsForUser(u.id, u.jellyfinUserId, apiKey, cfg, profile);
+  }
+  return { count: total };
+}
+
+async function recsForUser(
+  userId: string,
+  jellyfinUserId: string | null,
+  apiKey: string,
+  cfg: Awaited<ReturnType<typeof getConfig>>,
+  profile: Awaited<ReturnType<typeof getConfig>>["tasteProfile"],
+): Promise<number> {
+  const jelly = { ...cfg.jellyfin, userId: jellyfinUserId ?? undefined };
   const [downloads, follows, dismissed, watched] = await Promise.all([
-    prisma.download.findMany({ select: { tmdbId: true } }),
-    prisma.followedShow.findMany({ select: { tmdbId: true } }),
-    prisma.recommendation.findMany({ where: { status: "dismissed" }, select: { tmdbId: true } }),
-    jellyfinReady(cfg.jellyfin) ? getPlayedTitles(cfg.jellyfin, 100) : Promise.resolve([]),
+    prisma.download.findMany({ where: { userId }, select: { tmdbId: true } }),
+    prisma.followedShow.findMany({ where: { userId }, select: { tmdbId: true } }),
+    prisma.recommendation.findMany({ where: { status: "dismissed", userId }, select: { tmdbId: true } }),
+    jellyfinReady(jelly) && jellyfinUserId ? getPlayedTitles(jelly, 100) : Promise.resolve([]),
   ]);
   const exclude = new Set<number>();
   for (const d of downloads) if (d.tmdbId) exclude.add(d.tmdbId);
@@ -93,7 +114,7 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
   }
   if (seeds.length < 4) {
     const recent = await prisma.download.findMany({
-      where: { status: "COMPLETED" },
+      where: { status: "COMPLETED", userId },
       orderBy: { createdAt: "desc" },
       take: 8,
       select: { title: true, kind: true, year: true, tmdbId: true },
@@ -146,7 +167,7 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
   }
 
   const candidates = [...pool.values()];
-  if (candidates.length === 0) return { count: 0, reason: "No candidates — watch or download something first" };
+  if (candidates.length === 0) return 0;
 
   // A curated core (AI-ranked, with reasons) plus random wildcards from the rest.
   const ranked = await rankRecommendations(profile, candidates, 18);
@@ -167,40 +188,39 @@ export async function refreshRecommendations(): Promise<{ count: number; reason?
     picks.push({ c, reason: SOURCE_REASON[sources.get(key) ?? "random"], score: 50 + Math.floor(Math.random() * 30) });
   }
 
-  // Replace the previous "new" feed; keep dismissed/added history.
-  await prisma.recommendation.deleteMany({ where: { status: "new" } });
+  // Replace this member's previous "new" feed; keep dismissed/added history.
+  await prisma.recommendation.deleteMany({ where: { status: "new", userId } });
   let count = 0;
   for (const p of picks) {
     const c = p.c;
     try {
-      await prisma.recommendation.upsert({
-        where: { tmdbId_mediaType: { tmdbId: c.tmdbId, mediaType: c.mediaType } },
-        update: {
-          title: c.title,
-          year: c.year ?? null,
-          posterUrl: c.posterUrl ?? null,
-          overview: c.overview ?? null,
-          reason: p.reason,
-          score: p.score,
-          status: "new",
-        },
-        create: {
-          tmdbId: c.tmdbId,
-          mediaType: c.mediaType,
-          title: c.title,
-          year: c.year ?? null,
-          posterUrl: c.posterUrl ?? null,
-          overview: c.overview ?? null,
-          reason: p.reason,
-          score: p.score,
-          source: "ai",
-          status: "new",
-        },
+      // findFirst + update/create rather than upsert: the unique key now includes
+      // the nullable userId, and Postgres treats NULLs as distinct, so an upsert
+      // keyed on it can't reliably match. (Part D scopes this per user.)
+      const existingReco = await prisma.recommendation.findFirst({
+        where: { tmdbId: c.tmdbId, mediaType: c.mediaType, userId },
+        select: { id: true },
       });
+      const recoData = {
+        title: c.title,
+        year: c.year ?? null,
+        posterUrl: c.posterUrl ?? null,
+        overview: c.overview ?? null,
+        reason: p.reason,
+        score: p.score,
+        status: "new",
+      };
+      if (existingReco) {
+        await prisma.recommendation.update({ where: { id: existingReco.id }, data: recoData });
+      } else {
+        await prisma.recommendation.create({
+          data: { tmdbId: c.tmdbId, mediaType: c.mediaType, userId, source: "ai", ...recoData },
+        });
+      }
       count++;
     } catch {
       /* skip conflicting row */
     }
   }
-  return { count };
+  return count;
 }

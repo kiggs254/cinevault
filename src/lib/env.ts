@@ -20,6 +20,7 @@ const schema = z.object({
 
   // Auth + secret handling
   AUTH_PASSWORD: z.string().min(1, "AUTH_PASSWORD is required (admin login password)"),
+  ADMIN_USERNAME: z.string().optional(), // bootstrap admin username (default "admin")
   AUTH_SECRET: z.string().min(16, "AUTH_SECRET must be at least 16 characters"),
   ENCRYPTION_KEY: z
     .string()
@@ -59,7 +60,8 @@ const schema = z.object({
   TMDB_API_KEY: z.string().optional(),
 
   // Jellyfin (media server) — read watch history for taste + retention
-  JELLYFIN_URL: z.string().optional(),
+  JELLYFIN_URL: z.string().optional(), // internal, e.g. http://jellyfin:8096
+  JELLYFIN_PUBLIC_URL: z.string().optional(), // browser-facing, e.g. https://jellyfin.kiggs.co.ke
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_USER_ID: z.string().optional(),
 

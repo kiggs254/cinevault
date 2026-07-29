@@ -5,13 +5,16 @@ import {
   startFromQuery,
   type CreateDownloadInput,
 } from "@/lib/service/downloads";
+import { getSessionUser } from "@/lib/session";
 import type { MediaKind } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const downloads = await listDownloads();
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const downloads = await listDownloads({ userId: user.id });
   return NextResponse.json({ downloads }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -35,12 +38,14 @@ interface DownloadBody {
 }
 
 export async function POST(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as DownloadBody;
 
   try {
     // Auto mode: pick the best release for a natural-language query.
     if (body.auto && body.query) {
-      const { download, decision } = await startFromQuery(body.query.trim());
+      const { download, decision } = await startFromQuery(body.query.trim(), user.id);
       if (!download) {
         return NextResponse.json(
           { error: `No suitable release found. ${decision.reason}` },
@@ -72,6 +77,7 @@ export async function POST(req: Request) {
       season: body.plan?.season ?? null,
       episode: body.plan?.episode ?? null,
       query: body.query ?? null,
+      userId: user.id,
     };
     const download = await createDownload(input);
     return NextResponse.json({ download });

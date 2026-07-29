@@ -1,4 +1,5 @@
 import { getConfig } from "../config";
+import { prisma } from "../db";
 
 const API = "https://api.telegram.org";
 
@@ -159,6 +160,59 @@ export async function notify(
     } else {
       await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, text, buttons);
     }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Push to a specific member's linked Telegram chat (if they linked one and left
+ * notifications on). Used for per-user events (their download completed, etc.).
+ */
+export async function notifyUser(
+  userId: string,
+  text: string,
+  opts?: { photo?: string | null; buttons?: NotifyButton[] },
+): Promise<void> {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.telegram.botToken) return;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { telegramChatId: true, notifyTelegram: true },
+    });
+    if (!user?.telegramChatId || !user.notifyTelegram) return;
+    const base = (cfg.appUrl ?? "").replace(/\/$/, "");
+    const buttons: UrlButton[] = (opts?.buttons ?? []).map((b) => ({ text: b.text, url: `${base}${b.path}` }));
+    if (opts?.photo) {
+      await sendPhoto(cfg.telegram.botToken, user.telegramChatId, opts.photo, text, buttons);
+    } else {
+      await sendMessage(cfg.telegram.botToken, user.telegramChatId, text, buttons);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Ping the owner with Approve/Deny buttons for a pending registration. */
+export async function notifyOwnerNewRegistration(user: { id: string; username: string }): Promise<void> {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;
+    const base = (cfg.appUrl ?? "").replace(/\/$/, "");
+    const rows: InlineButton[][] = [
+      [
+        { text: "✅ Approve", callback_data: `usr:approve:${user.id}` },
+        { text: "⛔ Deny", callback_data: `usr:deny:${user.id}` },
+      ],
+    ];
+    if (/^https?:\/\//i.test(base) && !/localhost|127\.0\.0\.1/i.test(base)) {
+      rows.push([{ text: "👥 Manage users", url: `${base}/users` }]);
+    }
+    await sendWithKeyboard(cfg.telegram.botToken, cfg.telegram.chatId, {
+      text: `🆕 New registration: “${user.username}” wants to join Cinevault.\nApprove to auto-create their Jellyfin account.`,
+      keyboard: rows,
+    });
   } catch {
     /* best-effort */
   }

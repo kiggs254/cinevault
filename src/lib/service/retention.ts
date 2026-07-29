@@ -15,36 +15,42 @@ const DAY = 24 * 60 * 60 * 1000;
 export async function syncWatchedState(): Promise<{ marked: number }> {
   const cfg = await getConfig();
   if (!jellyfinReady(cfg.jellyfin)) return { marked: 0 };
-  const [eps, played] = await Promise.all([
-    getWatchedEpisodes(cfg.jellyfin),
-    getPlayedTitles(cfg.jellyfin, 200),
-  ]);
+  // Each member's Jellyfin play state marks THEIR own library rows watched.
+  const users = await prisma.user.findMany({
+    where: { status: "active", jellyfinUserId: { not: null } },
+    select: { id: true, jellyfinUserId: true },
+  });
   let marked = 0;
 
-  for (const e of eps) {
-    if (!e.seriesName && !e.seriesTmdbId) continue;
-    const or: Prisma.DownloadWhereInput[] = [];
-    if (e.seriesTmdbId) or.push({ tmdbId: e.seriesTmdbId });
-    if (e.seriesName) or.push({ title: { contains: e.seriesName, mode: "insensitive" } });
-    const when = e.lastPlayed ? new Date(e.lastPlayed) : new Date();
-    const res = await prisma.download.updateMany({
-      where: { kind: "TV", season: e.season, episode: e.episode, watchedAt: null, OR: or },
-      data: { watchedAt: when },
-    });
-    marked += res.count;
-  }
+  for (const u of users) {
+    const jelly = { ...cfg.jellyfin, userId: u.jellyfinUserId ?? undefined };
+    const [eps, played] = await Promise.all([getWatchedEpisodes(jelly), getPlayedTitles(jelly, 200)]);
 
-  for (const m of played.filter((p) => p.type === "Movie")) {
-    const or: Prisma.DownloadWhereInput[] = [];
-    if (m.tmdbId) or.push({ tmdbId: m.tmdbId });
-    if (m.name) or.push({ title: { contains: m.name, mode: "insensitive" } });
-    if (!or.length) continue;
-    const when = m.lastPlayed ? new Date(m.lastPlayed) : new Date();
-    const res = await prisma.download.updateMany({
-      where: { kind: "MOVIE", watchedAt: null, OR: or },
-      data: { watchedAt: when },
-    });
-    marked += res.count;
+    for (const e of eps) {
+      if (!e.seriesName && !e.seriesTmdbId) continue;
+      const or: Prisma.DownloadWhereInput[] = [];
+      if (e.seriesTmdbId) or.push({ tmdbId: e.seriesTmdbId });
+      if (e.seriesName) or.push({ title: { contains: e.seriesName, mode: "insensitive" } });
+      const when = e.lastPlayed ? new Date(e.lastPlayed) : new Date();
+      const res = await prisma.download.updateMany({
+        where: { userId: u.id, kind: "TV", season: e.season, episode: e.episode, watchedAt: null, OR: or },
+        data: { watchedAt: when },
+      });
+      marked += res.count;
+    }
+
+    for (const m of played.filter((p) => p.type === "Movie")) {
+      const or: Prisma.DownloadWhereInput[] = [];
+      if (m.tmdbId) or.push({ tmdbId: m.tmdbId });
+      if (m.name) or.push({ title: { contains: m.name, mode: "insensitive" } });
+      if (!or.length) continue;
+      const when = m.lastPlayed ? new Date(m.lastPlayed) : new Date();
+      const res = await prisma.download.updateMany({
+        where: { userId: u.id, kind: "MOVIE", watchedAt: null, OR: or },
+        data: { watchedAt: when },
+      });
+      marked += res.count;
+    }
   }
 
   return { marked };
@@ -70,7 +76,14 @@ export async function runRetention(): Promise<{ deleted: number }> {
   let deleted = 0;
   for (const r of rows) {
     try {
-      if (r.s3Key) await deleteObject(s3, cfg.s3.bucket, r.s3Key);
+      // Shared files, personal libraries: only physically free the object when no
+      // other member's (non-deleted) row still points at the same S3 key.
+      if (r.s3Key) {
+        const others = await prisma.download.count({
+          where: { s3Key: r.s3Key, s3DeletedAt: null, id: { not: r.id } },
+        });
+        if (others === 0) await deleteObject(s3, cfg.s3.bucket, r.s3Key);
+      }
       await prisma.download.update({ where: { id: r.id }, data: { s3DeletedAt: new Date() } });
       deleted++;
     } catch (e) {

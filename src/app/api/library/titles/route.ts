@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 import { getConfig } from "@/lib/config";
 import { getMovieDetails, getTvDetails } from "@/lib/metadata/tmdb";
 
@@ -46,8 +47,10 @@ interface Group {
 
 /** Downloaded titles grouped for the poster library. */
 export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const rows = await prisma.download.findMany({
-    where: { s3Key: { not: null }, s3DeletedAt: null },
+    where: { userId: user.id, s3Key: { not: null }, s3DeletedAt: null },
     orderBy: { createdAt: "desc" },
   });
 

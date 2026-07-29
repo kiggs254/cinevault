@@ -5,6 +5,7 @@ import { ProwlarrClient } from "@/lib/indexers/prowlarr";
 import { bucketReachable, makeS3 } from "@/lib/storage/s3";
 import { providerFor } from "@/lib/llm/providers";
 import { tgApi, sendMessage } from "@/lib/telegram/client";
+import { getSessionUser, isAdmin } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,20 +17,32 @@ const ALLOWED_SETTINGS = new Set([
   "prowlarrUrl",
   "s3Endpoint", "s3Region", "s3Bucket", "s3AccessKeyId", "s3PublicUrl", "s3BasePrefix",
   "preferredQuality", "minSeeders", "maxSizeGB", "deleteAfterUpload",
-  "jellyfinUrl", "jellyfinUserId", "telegramChatId", "telegramAllowedIds",
+  "jellyfinUrl", "jellyfinPublicUrl", "jellyfinUserId", "telegramChatId", "telegramAllowedIds",
   "autoDeleteWatched", "retentionDays", "autoFollowFromJellyfin",
+  "registrationEnabled", "registrationCode",
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
   "jellyfinApiKey", "telegramBotToken", "torboxApiKey",
 ]);
 
+/** Settings are admin-only. */
+async function guardAdmin(): Promise<NextResponse | null> {
+  const user = await getSessionUser();
+  if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  return null;
+}
+
 export async function GET() {
+  const denied = await guardAdmin();
+  if (denied) return denied;
   const config = await getMaskedConfig();
   return NextResponse.json(config, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function PUT(req: Request) {
+  const denied = await guardAdmin();
+  if (denied) return denied;
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(body)) {
@@ -40,6 +53,7 @@ export async function PUT(req: Request) {
   if ("deleteAfterUpload" in patch) patch.deleteAfterUpload = Boolean(patch.deleteAfterUpload);
   if ("autoDeleteWatched" in patch) patch.autoDeleteWatched = Boolean(patch.autoDeleteWatched);
   if ("autoFollowFromJellyfin" in patch) patch.autoFollowFromJellyfin = Boolean(patch.autoFollowFromJellyfin);
+  if ("registrationEnabled" in patch) patch.registrationEnabled = Boolean(patch.registrationEnabled);
   if ("retentionDays" in patch) patch.retentionDays = Math.max(1, Number(patch.retentionDays) || 30);
 
   await saveConfig(patch);
@@ -48,6 +62,8 @@ export async function PUT(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const denied = await guardAdmin();
+  if (denied) return denied;
   const body = (await req.json().catch(() => ({}))) as { target?: string };
   const cfg = await getConfig();
 

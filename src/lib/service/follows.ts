@@ -2,7 +2,7 @@ import { prisma } from "../db";
 import { getConfig } from "../config";
 import { ProwlarrClient } from "../indexers/prowlarr";
 import { grabEpisode, ownedEpisodeKeys } from "./downloads";
-import { notify } from "../telegram/client";
+import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { enqueueSeasonGrab } from "../queue";
 import { getWatchingSeries, jellyfinReady } from "../jellyfin/client";
@@ -13,17 +13,20 @@ const DAY = 24 * 60 * 60 * 1000;
 /** Follow a show by TMDB id (enriched from TMDB). Idempotent. */
 export async function followShow(
   tmdbId: number,
-  opts: { source?: string; autoDownload?: boolean; quality?: string } = {},
+  opts: { source?: string; autoDownload?: boolean; quality?: string; userId?: string | null } = {},
 ): Promise<FollowedShow | null> {
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey) return null;
-  const existing = await prisma.followedShow.findUnique({ where: { tmdbId } });
+  const existing = await prisma.followedShow.findFirst({
+    where: { tmdbId, ...(opts.userId ? { userId: opts.userId } : {}) },
+  });
   if (existing) return existing;
   const d = await getTvDetails(cfg.tmdb.apiKey, tmdbId);
   if (!d) return null;
   const created = await prisma.followedShow.create({
     data: {
       tmdbId,
+      userId: opts.userId ?? null,
       title: d.title,
       year: d.year ?? null,
       posterUrl: d.posterUrl ?? null,
@@ -47,6 +50,7 @@ export async function followShow(
       year: d.year ?? null,
       season: Math.max(...released),
       notify: false,
+      userId: opts.userId ?? null,
     }).catch(() => {});
   }
   return created;
@@ -56,24 +60,37 @@ export async function unfollowShow(id: string): Promise<void> {
   await prisma.followedShow.delete({ where: { id } }).catch(() => {});
 }
 
-/** Auto-follow series the user is actively watching in Jellyfin. */
+/** Auto-follow series each member is actively watching in their own Jellyfin. */
 export async function autoFollowFromJellyfin(): Promise<{ added: number }> {
   const cfg = await getConfig();
   if (!cfg.discovery.autoFollowFromJellyfin || !jellyfinReady(cfg.jellyfin) || !cfg.tmdb.apiKey) {
     return { added: 0 };
   }
-  const watching = await getWatchingSeries(cfg.jellyfin);
+  const users = await prisma.user.findMany({
+    where: { status: "active", jellyfinUserId: { not: null } },
+    select: { id: true, jellyfinUserId: true },
+  });
   let added = 0;
-  for (const s of watching) {
-    let tmdbId = s.tmdbId;
-    if (!tmdbId) tmdbId = (await searchTitle(cfg.tmdb.apiKey, "tv", s.name, s.year))?.tmdbId;
-    if (!tmdbId) continue;
-    const exists = await prisma.followedShow.findUnique({ where: { tmdbId }, select: { id: true } });
-    if (exists) continue;
-    const created = await followShow(tmdbId, { source: "jellyfin", autoDownload: true });
-    if (created) {
-      added++;
-      await notify(`📺 Now following “${created.title}” (you're watching it) — I'll grab new episodes automatically.`);
+  for (const u of users) {
+    const jelly = { ...cfg.jellyfin, userId: u.jellyfinUserId ?? undefined };
+    const watching = await getWatchingSeries(jelly);
+    for (const s of watching) {
+      let tmdbId = s.tmdbId;
+      if (!tmdbId) tmdbId = (await searchTitle(cfg.tmdb.apiKey, "tv", s.name, s.year))?.tmdbId;
+      if (!tmdbId) continue;
+      const exists = await prisma.followedShow.findFirst({
+        where: { tmdbId, userId: u.id },
+        select: { id: true },
+      });
+      if (exists) continue;
+      const created = await followShow(tmdbId, { source: "jellyfin", autoDownload: true, userId: u.id });
+      if (created) {
+        added++;
+        await notifyUser(
+          u.id,
+          `📺 Now following “${created.title}” (you're watching it) — I'll grab new episodes automatically.`,
+        );
+      }
     }
   }
   return { added };
@@ -109,7 +126,7 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
         ? Math.max(...releasedSeasons.map((s) => s.seasonNumber))
         : null;
       const seasons = latestSeason != null ? [latestSeason] : [];
-      const owned = await ownedEpisodeKeys(show.tmdbId, show.title);
+      const owned = await ownedEpisodeKeys(show.tmdbId, show.title, show.userId);
       let grabbedThisShow = 0;
 
       for (const sn of seasons) {
@@ -131,6 +148,7 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
               ep,
               indexerIds: cfg.profile.legalIndexerIds,
               notify: true,
+              userId: show.userId,
             })
           ) {
             grabbed++;

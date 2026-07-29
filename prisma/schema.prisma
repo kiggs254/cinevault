@@ -61,10 +61,13 @@ model Download {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   completedAt     DateTime?
+  userId          String? // requesting member (null = legacy/admin-owned)
+  user            User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([createdAt])
   @@index([tmdbId])
+  @@index([userId])
 }
 
 /// Single-row app configuration. Secrets are AES-256-GCM encrypted at rest.
@@ -75,6 +78,32 @@ model AppConfig {
   updatedAt DateTime @updatedAt
 }
 
+/// A community member. Portal login + an auto-provisioned Jellyfin account share
+/// the same username/password. Registration is admin-approved.
+model User {
+  id                String    @id @default(cuid())
+  username          String    @unique // portal login + Jellyfin username
+  passwordHash      String // scrypt: "scrypt$<salt>$<hash>"
+  pendingSecret     String? // AES-encrypted chosen password, kept only until Jellyfin is provisioned, then nulled
+  role              String    @default("member") // member | admin
+  status            String    @default("pending") // pending | active | denied | suspended
+  jellyfinUserId    String? // set when the Jellyfin account is provisioned
+  telegramChatId    String?   @unique // bound via bot /start link_<token>
+  telegramLinkToken String?   @unique // one-time token for the Telegram deep-link
+  notifyTelegram    Boolean   @default(true)
+  statusToken       String    @unique @default(cuid()) // opaque token for the public /welcome status poll
+  createdAt         DateTime  @default(now())
+  approvedAt        DateTime?
+
+  downloads       Download[]
+  follows         FollowedShow[]
+  wanted          WantedMovie[]
+  recommendations Recommendation[]
+  chats           ChatSession[]
+
+  @@index([status])
+}
+
 /// A persisted assistant conversation. `items` holds the ordered chat items
 /// (messages, option lists, actions) as JSON so the UI restores exactly.
 model ChatSession {
@@ -83,8 +112,11 @@ model ChatSession {
   items     Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([updatedAt])
+  @@index([userId])
 }
 
 enum WatchType {
@@ -138,7 +170,7 @@ model FeedItem {
 /// auto-downloads aired episodes not yet in the library, from lawful indexers.
 model FollowedShow {
   id            String    @id @default(cuid())
-  tmdbId        Int       @unique
+  tmdbId        Int
   title         String
   year          Int?
   posterUrl     String?
@@ -150,14 +182,18 @@ model FollowedShow {
   lastCheckedAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, tmdbId])
   @@index([autoDownload])
+  @@index([userId])
 }
 
 /** A subscribed upcoming/unavailable movie: auto-download once a real (non-cam) release appears. */
 model WantedMovie {
   id            String    @id @default(cuid())
-  tmdbId        Int       @unique
+  tmdbId        Int
   title         String
   year          Int?
   posterUrl     String?
@@ -167,8 +203,12 @@ model WantedMovie {
   lastCheckedAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, tmdbId])
   @@index([status])
+  @@index([userId])
 }
 
 /// A cached, personalized suggestion (a TMDB title, not a release). Surfaced in
@@ -186,8 +226,11 @@ model Recommendation {
   source    String? // similar:<id> | trending | genre:<id>
   status    String   @default("new") // new | dismissed | added
   createdAt DateTime @default(now())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@unique([tmdbId, mediaType])
+  @@unique([userId, tmdbId, mediaType])
   @@index([status])
   @@index([score])
+  @@index([userId])
 }

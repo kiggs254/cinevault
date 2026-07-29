@@ -13,7 +13,7 @@ import {
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
 import { makeS3, deleteObject } from "../storage/s3";
-import { notify } from "../telegram/client";
+import { notify, notifyUser } from "../telegram/client";
 import type { Download } from "@prisma/client";
 import { enqueueDownload, enqueueEpisodeGrab } from "../queue";
 import {
@@ -98,6 +98,7 @@ export interface CreateDownloadInput {
   query?: string | null;
   posterUrl?: string | null;
   overview?: string | null;
+  userId?: string | null; // owning member
 }
 
 // Cache TMDB poster/overview by title so per-episode grabs don't each re-fetch.
@@ -141,6 +142,10 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
   if (input.kind === "TV" && input.season != null && input.episode != null) {
     const rows = await prisma.download.findMany({
       where: {
+        // Scope the "one row per episode" dedup to this member so each member
+        // keeps their own library row (files are still shared — see the
+        // completed-twin clone in the grab entry points).
+        ...(input.userId ? { userId: input.userId } : {}),
         season: input.season,
         episode: input.episode,
         OR: [
@@ -234,6 +239,7 @@ export async function createDownload(input: CreateDownloadInput): Promise<Downlo
       season: input.season ?? null,
       episode: input.episode ?? null,
       tmdbId: input.tmdbId ?? null,
+      userId: input.userId ?? null,
       posterUrl,
       overview,
       query: input.query ?? null,
@@ -254,6 +260,7 @@ function resultToInput(
   plan: PlannedQuery,
   chosen: ScoredResult,
   nl?: string,
+  userId?: string | null,
 ): CreateDownloadInput {
   return {
     releaseName: chosen.title,
@@ -268,11 +275,15 @@ function resultToInput(
     season: plan.season ?? null,
     episode: plan.episode ?? null,
     query: nl ?? null,
+    userId: userId ?? null,
   };
 }
 
 /** One-shot: plan -> search -> choose best -> queue. Used by agent + auto mode. */
-export async function startFromQuery(nl: string): Promise<{
+export async function startFromQuery(
+  nl: string,
+  userId?: string | null,
+): Promise<{
   plan: PlannedQuery;
   ranked: ScoredResult[];
   decision: RankDecision;
@@ -281,7 +292,7 @@ export async function startFromQuery(nl: string): Promise<{
   const { plan, ranked } = await planAndSearch(nl);
   const { chosen, decision } = await chooseBest(plan, ranked);
   if (!chosen) return { plan, ranked, decision };
-  const input = resultToInput(plan, chosen, nl);
+  const input = resultToInput(plan, chosen, nl, userId);
   if (!input.source) return { plan, ranked, decision };
   const download = await createDownload(input);
   return { plan, ranked, decision, download };
@@ -296,7 +307,13 @@ export async function grabMovie(opts: {
   year?: number | null;
   /** For subscriptions: only grab a real (non-cam, ≥720p) release — wait, don't grab a cam. */
   requireNonCam?: boolean;
+  userId?: string | null;
 }): Promise<DownloadDTO | null> {
+  // Someone already has this movie? Give the requester a library entry pointing
+  // at the same file instead of downloading it again.
+  const twin = await cloneCompletedTwin(opts.userId, { tmdbId: opts.tmdbId, kind: "MOVIE" });
+  if (twin) return twin;
+
   const cfg = await getConfig();
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
   const q = `${opts.title}${opts.year ? ` ${opts.year}` : ""}`;
@@ -330,6 +347,7 @@ export async function grabMovie(opts: {
     title: opts.title,
     year: opts.year ?? null,
     tmdbId: opts.tmdbId,
+    userId: opts.userId ?? null,
     query: q,
   });
 }
@@ -341,6 +359,7 @@ export async function grabSingleEpisode(opts: {
   season: number;
   episode: number;
   year?: number | null;
+  userId?: string | null;
 }): Promise<boolean> {
   if (opts.season < 1 || opts.episode < 1) return false;
   const cfg = await getConfig();
@@ -352,6 +371,7 @@ export async function grabSingleEpisode(opts: {
     show: { title: opts.title, year: opts.year ?? null, tmdbId: opts.tmdbId },
     ep: { seasonNumber: opts.season, episodeNumber: opts.episode },
     notify: false,
+    userId: opts.userId ?? null,
   });
 }
 
@@ -370,10 +390,79 @@ export interface SeasonGrabResult {
 const airedTs = (e: Pick<TmdbEpisode, "airDate">): number =>
   e.airDate ? new Date(`${e.airDate}T00:00:00Z`).getTime() : NaN;
 
+/**
+ * Personal libraries over one shared file store: if another member already has a
+ * COMPLETED copy of this exact title (movie, or TV season/episode), give the
+ * requester their own COMPLETED library row pointing at the same S3 object rather
+ * than downloading it again. Returns the (existing or cloned) row, or null if
+ * nothing to clone. Also returns the requester's own row if they already have one.
+ */
+async function cloneCompletedTwin(
+  userId: string | null | undefined,
+  sel: { tmdbId?: number | null; kind: MediaKind; season?: number | null; episode?: number | null },
+): Promise<DownloadDTO | null> {
+  if (!userId || !sel.tmdbId) return null;
+  const season = sel.season ?? null;
+  const episode = sel.episode ?? null;
+  const mine = await prisma.download.findFirst({
+    where: {
+      userId,
+      tmdbId: sel.tmdbId,
+      season,
+      episode,
+      status: { notIn: ["FAILED", "CANCELLED"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (mine) return toDTO(mine);
+  const twin = await prisma.download.findFirst({
+    where: {
+      status: "COMPLETED",
+      tmdbId: sel.tmdbId,
+      season,
+      episode,
+      s3Key: { not: null },
+      NOT: { userId },
+    },
+    orderBy: { completedAt: "desc" },
+  });
+  if (!twin) return null;
+  const clone = await prisma.download.create({
+    data: {
+      title: twin.title,
+      releaseName: twin.releaseName,
+      kind: twin.kind,
+      year: twin.year,
+      season: twin.season,
+      episode: twin.episode,
+      tmdbId: twin.tmdbId,
+      userId,
+      posterUrl: twin.posterUrl,
+      overview: twin.overview,
+      magnet: twin.magnet,
+      status: "COMPLETED",
+      progress: 100,
+      sizeBytes: twin.sizeBytes,
+      downloadedBytes: twin.sizeBytes,
+      s3Bucket: twin.s3Bucket,
+      s3Key: twin.s3Key,
+      s3Prefix: twin.s3Prefix,
+      completedAt: new Date(),
+    },
+  });
+  await publishProgress({ type: "created", downloadId: clone.id, status: "COMPLETED" });
+  return toDTO(clone);
+}
+
 /** Episodes already in the library for a show (by TMDB id or title), season+episode set. */
-export async function ownedEpisodeKeys(tmdbId: number, title: string): Promise<Set<string>> {
+export async function ownedEpisodeKeys(
+  tmdbId: number,
+  title: string,
+  userId?: string | null,
+): Promise<Set<string>> {
   const rows = await prisma.download.findMany({
     where: {
+      ...(userId ? { userId } : {}),
       OR: [{ tmdbId }, { title: { contains: title, mode: "insensitive" } }],
       season: { not: null },
       episode: { not: null },
@@ -396,8 +485,18 @@ export async function grabEpisode(o: {
   ep: Pick<TmdbEpisode, "seasonNumber" | "episodeNumber" | "name">;
   indexerIds?: number[];
   notify?: boolean;
+  userId?: string | null;
 }): Promise<boolean> {
   const { prowlarr, cfg, show, ep } = o;
+  // Another member already has this episode? Clone it into the requester's
+  // library instead of re-downloading.
+  const twin = await cloneCompletedTwin(o.userId, {
+    tmdbId: show.tmdbId,
+    kind: "TV",
+    season: ep.seasonNumber,
+    episode: ep.episodeNumber,
+  });
+  if (twin) return true;
   const q = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
   const label = `${show.title} S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}`;
   void logActivity(`Searching sources — ${label}`, { kind: "search", title: show.title });
@@ -444,6 +543,7 @@ export async function grabEpisode(o: {
     season: ep.seasonNumber,
     episode: ep.episodeNumber,
     tmdbId: show.tmdbId,
+    userId: o.userId ?? null,
     query: q,
   });
   void logActivity(`Queued ${label}`, { kind: "queue", title: show.title });
@@ -456,10 +556,10 @@ export async function grabEpisode(o: {
     } catch {
       /* poster optional */
     }
-    await notify(
-      `⬇️ New episode grabbing\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`,
-      { photo, buttons: [{ text: "📥 Downloads", path: "/downloads" }] },
-    );
+    const text = `⬇️ New episode grabbing\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`;
+    const buttons = [{ text: "📥 Downloads", path: "/downloads" }];
+    if (o.userId) await notifyUser(o.userId, text, { photo, buttons });
+    else await notify(text, { photo, buttons });
   }
   return true;
 }
@@ -496,6 +596,7 @@ export async function grabSeason(opts: {
   year?: number | null;
   indexerIds?: number[];
   notify?: boolean;
+  userId?: string | null;
 }): Promise<SeasonGrabResult> {
   const base: SeasonGrabResult = {
     season: opts.season,
@@ -534,6 +635,7 @@ export async function grabSeason(opts: {
   // pack or grab episodes individually (guards "Grab missing" from re-downloading).
   const existingPack = await prisma.download.findFirst({
     where: {
+      ...(opts.userId ? { userId: opts.userId } : {}),
       tmdbId: opts.tmdbId,
       season: opts.season,
       episode: null,
@@ -567,6 +669,7 @@ export async function grabSeason(opts: {
         year: opts.year ?? null,
         season: opts.season,
         tmdbId: opts.tmdbId,
+        userId: opts.userId ?? null,
         query: `${opts.title} Season ${opts.season}`,
       });
       return { season: opts.season, mode: "pack", queued: 1, failed: 0, total: 1 };
@@ -579,26 +682,31 @@ export async function grabSeason(opts: {
   if (!olderThanYear) {
     const airedTimes = available.map(airedTs).filter((t) => Number.isFinite(t));
     const firstAired = airedTimes.length ? Math.min(...airedTimes) : (seasonAired ?? now);
-    await prisma.followedShow
-      .upsert({
-        where: { tmdbId: opts.tmdbId },
-        create: {
-          tmdbId: opts.tmdbId,
-          title: opts.title,
-          year: opts.year ?? null,
-          autoDownload: true,
-          source: "season-grab",
-          createdAt: new Date(firstAired - 2 * DAY),
-        },
-        update: {},
-      })
-      .catch(() => {});
+    const existingFollow = await prisma.followedShow.findFirst({
+      where: { ...(opts.userId ? { userId: opts.userId } : {}), tmdbId: opts.tmdbId },
+      select: { id: true },
+    });
+    if (!existingFollow) {
+      await prisma.followedShow
+        .create({
+          data: {
+            tmdbId: opts.tmdbId,
+            title: opts.title,
+            year: opts.year ?? null,
+            autoDownload: true,
+            source: "season-grab",
+            userId: opts.userId ?? null,
+            createdAt: new Date(firstAired - 2 * DAY),
+          },
+        })
+        .catch(() => {});
+    }
   }
 
   // Episode-by-episode: enqueue a short grab job per aired, not-yet-owned episode.
   // Fanning out (instead of searching them all in this one long job) keeps the grab
   // worker cycling fast, so new requests are never stuck behind one season's walk.
-  const owned = await ownedEpisodeKeys(opts.tmdbId, opts.title);
+  const owned = await ownedEpisodeKeys(opts.tmdbId, opts.title, opts.userId);
   let queued = 0;
   for (const ep of available) {
     if (owned.has(`${ep.seasonNumber}x${ep.episodeNumber}`)) continue;
@@ -611,6 +719,7 @@ export async function grabSeason(opts: {
       name: ep.name ?? null,
       indexerIds: opts.indexerIds,
       notify: opts.notify,
+      userId: opts.userId ?? null,
     });
     queued++;
     owned.add(`${ep.seasonNumber}x${ep.episodeNumber}`);
@@ -638,11 +747,16 @@ export async function runEpisodeGrab(data: EpisodeGrabData): Promise<boolean> {
     ep: { seasonNumber: data.season, episodeNumber: data.episode, name: data.name ?? undefined },
     indexerIds: data.indexerIds,
     notify: data.notify,
+    userId: data.userId ?? null,
   });
 }
 
-export async function listDownloads(): Promise<DownloadDTO[]> {
-  const rows = await prisma.download.findMany({ orderBy: { createdAt: "desc" } });
+/** List downloads. Pass a userId to scope to one member; omit for all (admin). */
+export async function listDownloads(opts?: { userId?: string | null }): Promise<DownloadDTO[]> {
+  const rows = await prisma.download.findMany({
+    where: opts?.userId ? { userId: opts.userId } : undefined,
+    orderBy: { createdAt: "desc" },
+  });
   return rows.map(toDTO);
 }
 
@@ -667,6 +781,14 @@ export async function retryDownload(id: string): Promise<DownloadDTO | null> {
 async function deleteDownloadObjects(row: Download, cfg: ResolvedConfig): Promise<void> {
   const bucket = row.s3Bucket ?? cfg.s3.bucket;
   if (!bucket || !cfg.s3.endpoint || !cfg.s3.accessKeyId) return;
+  // Shared files, personal libraries: if another member's (non-deleted) row points
+  // at the same file, keep the object — just drop this member's row.
+  if (row.s3Key) {
+    const shared = await prisma.download.count({
+      where: { id: { not: row.id }, s3DeletedAt: null, s3Key: row.s3Key },
+    });
+    if (shared > 0) return;
+  }
   // Prefer the exact keys uploaded for this download (a pack has several); fall
   // back to the single primary key. Never delete by shared folder prefix — that
   // would take sibling episodes with it.

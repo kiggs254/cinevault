@@ -148,6 +148,19 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     }
   }
 
+  async function playOnJellyfin() {
+    setMsg("");
+    try {
+      const d = await jsonFetch<{ url?: string }>(
+        `/api/jellyfin/resolve?tmdbId=${seed.tmdbId}&type=${seed.mediaType}`,
+      );
+      if (d.url && typeof window !== "undefined") window.open(d.url, "_blank", "noopener");
+      else setMsg("Not on Jellyfin yet — give the library a minute to scan.");
+    } catch {
+      setMsg("Not on Jellyfin yet — give the library a minute to scan.");
+    }
+  }
+
   async function downloadSeason(season: number) {
     setMsg("");
     await jsonFetch("/api/download/tmdb", {
@@ -256,6 +269,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const showMetaStrip = !!(rating || details?.certification || runtimeLabel || dateLabel);
   const releasedSeasons = (details?.seasons ?? []).filter((s) => s.released && s.seasonNumber >= 1);
   const allSeasonsOwned = releasedSeasons.length > 0 && releasedSeasons.every((s) => s.owned);
+  const anySeasonOwned = releasedSeasons.some((s) => s.owned);
 
   return (
     <div className="sheet fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
@@ -349,7 +363,11 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
               </button>
 
               {seed.mediaType === "movie" ? (
-                isUpcomingMovie ? (
+                details?.ownedMovie ? (
+                  <button className="btn btn-accent w-full" onClick={playOnJellyfin}>
+                    <Play size={15} /> Play on Jellyfin
+                  </button>
+                ) : isUpcomingMovie ? (
                   <button
                     className={`btn w-full ${subscribed ? "btn-ghost" : "btn-accent"}`}
                     onClick={toggleSubscribe}
@@ -365,16 +383,21 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                     {subscribed ? "Subscribed — auto-download" : "Notify + auto-download when out"}
                   </button>
                 ) : (
-                  <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy || details?.ownedMovie}>
+                  <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy}>
                     {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                    {details?.ownedMovie ? "In your library" : "Download (720p)"}
+                    Download (720p)
                   </button>
                 )
               ) : (
                 <>
+                  {anySeasonOwned && (
+                    <button className="btn btn-accent mb-3 w-full" onClick={playOnJellyfin}>
+                      <Play size={15} /> Play on Jellyfin
+                    </button>
+                  )}
                   {releasedSeasons.length > 0 && (
                     <button
-                      className="btn btn-accent mb-3 w-full"
+                      className={`btn mb-3 w-full ${anySeasonOwned ? "btn-ghost" : "btn-accent"}`}
                       onClick={downloadAllSeasons}
                       disabled={busy || allSeasonsOwned}
                     >

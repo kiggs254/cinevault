@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getSeasonEpisodes } from "@/lib/metadata/tmdb";
 import { prisma } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,8 @@ function packObjectKeys(row: { s3Key: string | null; metadata: unknown }): strin
 
 /** A season's episodes enriched with aired/owned state and the matching download. */
 export async function GET(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey) return NextResponse.json({ error: "TMDB not configured" }, { status: 400 });
   const url = new URL(req.url);
@@ -47,7 +50,7 @@ export async function GET(req: Request) {
 
   // Per-episode downloads (individual files → individually playable).
   const dls = await prisma.download.findMany({
-    where: { tmdbId: id, season, episode: { not: null }, status: { notIn: ["FAILED", "CANCELLED"] } },
+    where: { userId: user.id, tmdbId: id, season, episode: { not: null }, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { id: true, episode: true, s3Key: true, sizeBytes: true, status: true },
     orderBy: { createdAt: "desc" },
   });
@@ -57,7 +60,7 @@ export async function GET(req: Request) {
   // A whole-season pack (episode = null) covers every aired episode even though
   // there's no per-episode row. Prefer a completed one for status.
   const packs = await prisma.download.findMany({
-    where: { tmdbId: id, season, episode: null, status: { notIn: ["FAILED", "CANCELLED"] } },
+    where: { userId: user.id, tmdbId: id, season, episode: null, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { id: true, status: true, s3Key: true, metadata: true },
     orderBy: { createdAt: "desc" },
   });

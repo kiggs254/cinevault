@@ -36,12 +36,13 @@ export interface ResolvedConfig {
     autoGrabThreshold: number;
     legalIndexerIds: number[];
   };
-  jellyfin: { url?: string; apiKey?: string; userId?: string };
+  jellyfin: { url?: string; publicUrl?: string; apiKey?: string; userId?: string };
   telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
   torbox: { apiKey?: string };
   appUrl: string; // public base URL of this app (for deep-link CTAs)
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
+  registration: { enabled: boolean; code?: string }; // public /register gate
   tasteProfile: TasteProfile | null;
 }
 
@@ -156,6 +157,7 @@ export async function getConfig(): Promise<ResolvedConfig> {
     },
     jellyfin: {
       url: str(settings.jellyfinUrl) ?? env.JELLYFIN_URL,
+      publicUrl: str(settings.jellyfinPublicUrl) ?? env.JELLYFIN_PUBLIC_URL,
       apiKey: dec("jellyfinApiKey") ?? env.JELLYFIN_API_KEY,
       userId: str(settings.jellyfinUserId) ?? env.JELLYFIN_USER_ID,
     },
@@ -172,6 +174,10 @@ export async function getConfig(): Promise<ResolvedConfig> {
     },
     discovery: {
       autoFollowFromJellyfin: settings.autoFollowFromJellyfin !== false, // default on
+    },
+    registration: {
+      enabled: settings.registrationEnabled !== false, // default on
+      code: str(settings.registrationCode),
     },
     tasteProfile: (settings.tasteProfile as TasteProfile | undefined) ?? null,
   };
