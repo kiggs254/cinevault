@@ -407,14 +407,26 @@ async function downloadViaTorbox(
   if (dl.magnet.startsWith("magnet:")) {
     added = await tb.addMagnet(dl.magnet);
   } else {
-    // Indexers usually return a .torrent URL, not a magnet — fetch the file and
-    // hand the bytes to TorBox (createtorrent accepts a file upload).
-    const res = await fetch(dl.magnet).catch(() => null);
-    if (!res || !res.ok) {
-      console.log(`[torbox] .torrent fetch failed for ${dl.title}: ${res?.status ?? "network"}`);
+    // Indexer .torrent URLs commonly 302-redirect to EITHER a .torrent file OR a
+    // magnet link. Resolve the redirect manually: hand a magnet to addMagnet,
+    // otherwise fetch the .torrent bytes. (Following the redirect blindly lands on
+    // a magnet: URL, which fetch() rejects — that was the "network" failure.)
+    const first = await fetch(dl.magnet, { redirect: "manual" }).catch(() => null);
+    if (!first) {
+      console.log(`[torbox] .torrent fetch failed for ${dl.title}: network`);
       return null;
     }
-    added = await tb.addTorrentFile(await res.arrayBuffer());
+    const loc = first.headers.get("location");
+    if (loc && loc.startsWith("magnet:")) {
+      added = await tb.addMagnet(loc);
+    } else {
+      const tor = loc ? await fetch(loc).catch(() => null) : first;
+      if (!tor || !tor.ok) {
+        console.log(`[torbox] .torrent fetch failed for ${dl.title}: ${tor?.status ?? "network"}`);
+        return null;
+      }
+      added = await tb.addTorrentFile(await tor.arrayBuffer());
+    }
   }
   if (!added) {
     console.log(`[torbox] add rejected for ${dl.title} — using qBittorrent (bad key / rate-limited?)`);
