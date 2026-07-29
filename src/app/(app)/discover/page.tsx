@@ -13,6 +13,8 @@ import {
   RefreshCw,
   Download,
   Star,
+  Bell,
+  CalendarClock,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -104,7 +106,7 @@ export default function DiscoverPage() {
 
   const confirm = useConfirm();
   const [seed, setSeed] = useState<TitleSeed | null>(null);
-  const [tab, setTab] = useState<"foryou" | "following" | "networks">("foryou");
+  const [tab, setTab] = useState<"foryou" | "following" | "networks" | "coming">("foryou");
   const [showTaste, setShowTaste] = useState(false);
   const [recType, setRecType] = useState<"all" | "movie" | "tv">("all");
   const [owned, setOwned] = useState<Set<number>>(new Set());
@@ -119,11 +121,21 @@ export default function DiscoverPage() {
   const [netTotal, setNetTotal] = useState(1);
   const [netLoading, setNetLoading] = useState(false);
 
+  // Coming Soon tab (upcoming movies + subscriptions)
+  const [comingItems, setComingItems] = useState<NetTitle[]>([]);
+  const [comingPage, setComingPage] = useState(1);
+  const [comingTotal, setComingTotal] = useState(1);
+  const [comingLoading, setComingLoading] = useState(false);
+  const [wanted, setWanted] = useState<Set<number>>(new Set());
+
   const isOwned = (id: number) => owned.has(id);
+  const isWanted = (id: number) => wanted.has(id);
   const openRec = (r: Rec) =>
     setSeed({ tmdbId: r.tmdbId, mediaType: r.mediaType, title: r.title, year: r.year, posterUrl: r.posterUrl });
   const openNet = (t: NetTitle) =>
     setSeed({ tmdbId: t.tmdbId, mediaType: "tv", title: t.title, year: t.year ?? null, posterUrl: t.posterUrl ?? null });
+  const openMovie = (t: NetTitle) =>
+    setSeed({ tmdbId: t.tmdbId, mediaType: "movie", title: t.title, year: t.year ?? null, posterUrl: t.posterUrl ?? null });
 
   async function loadMoreNetwork() {
     if (netLoading || netPage >= netTotal) return;
@@ -147,6 +159,34 @@ export default function DiscoverPage() {
       setNetLoading(false);
     }
   }
+
+  async function loadMoreComing() {
+    if (comingLoading || comingPage >= comingTotal) return;
+    setComingLoading(true);
+    try {
+      const d = await jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(
+        `/api/discover/upcoming?page=${comingPage + 1}`,
+      );
+      setComingItems((cur) => {
+        const ids = new Set(cur.map((c) => c.tmdbId));
+        return [...cur, ...d.results.filter((r) => !ids.has(r.tmdbId))];
+      });
+      setComingPage(d.page);
+      setComingTotal(d.totalPages);
+    } catch {
+      /* ignore */
+    } finally {
+      setComingLoading(false);
+    }
+  }
+
+  const refreshWanted = useCallback(
+    () =>
+      jsonFetch<{ tmdbIds: number[] }>("/api/wanted")
+        .then((d) => setWanted(new Set(d.tmdbIds)))
+        .catch(() => {}),
+    [],
+  );
 
   const shownRecs = recType === "all" ? recs : recs.filter((r) => r.mediaType === recType);
 
@@ -186,7 +226,27 @@ export default function DiscoverPage() {
     jsonFetch<{ genres: { id: number; name: string }[] }>("/api/discover/genres")
       .then((d) => setNetGenres(d.genres))
       .catch(() => {});
-  }, []);
+    refreshWanted();
+  }, [refreshWanted]);
+
+  // Coming Soon tab: load page 1 whenever it's opened.
+  useEffect(() => {
+    if (tab !== "coming") return;
+    let alive = true;
+    setComingLoading(true);
+    jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(`/api/discover/upcoming?page=1`)
+      .then((d) => {
+        if (!alive) return;
+        setComingItems(d.results);
+        setComingPage(d.page);
+        setComingTotal(d.totalPages);
+      })
+      .catch(() => alive && setComingItems([]))
+      .finally(() => alive && setComingLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [tab]);
 
   // Networks tab: reset + load page 1 whenever the network/genre/rating changes.
   useEffect(() => {
@@ -320,7 +380,7 @@ export default function DiscoverPage() {
 
       {/* Tabs */}
       <div className="mb-6 flex gap-2">
-        {(["foryou", "networks", "following"] as const).map((t) => (
+        {(["foryou", "networks", "coming", "following"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -328,7 +388,13 @@ export default function DiscoverPage() {
               tab === t ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
             }`}
           >
-            {t === "foryou" ? "For You" : t === "networks" ? "Networks" : `Following${follows.length ? ` · ${follows.length}` : ""}`}
+            {t === "foryou"
+              ? "For You"
+              : t === "networks"
+                ? "Networks"
+                : t === "coming"
+                  ? "Coming Soon"
+                  : `Following${follows.length ? ` · ${follows.length}` : ""}`}
           </button>
         ))}
       </div>
@@ -415,6 +481,55 @@ export default function DiscoverPage() {
                     Load more
                   </button>
                 ) : netItems.length > 0 ? (
+                  <p className="text-xs text-faint">That&apos;s everything.</p>
+                ) : null}
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {/* Coming Soon — subscribe to upcoming movies */}
+      {tab === "coming" && (
+        <section className="mb-8">
+          <p className="mb-4 flex items-center gap-2 text-sm text-muted">
+            <CalendarClock size={15} className="text-accent" />
+            Movies not out yet. Subscribe and we&apos;ll grab it automatically once a real (non-cam) release appears.
+          </p>
+          {comingItems.length === 0 && !comingLoading ? (
+            <p className="text-sm text-faint">Nothing on the calendar right now — check back soon.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 sm:gap-4 lg:grid-cols-6">
+                {comingItems.map((t) => (
+                  <button key={t.tmdbId} onClick={() => openMovie(t)} className="group text-left" title={t.title}>
+                    <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-border bg-surface-2 transition-colors group-hover:border-accent">
+                      {t.posterUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={t.posterUrl} alt={t.title} className="h-full w-full object-cover" loading="lazy" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-faint"><Film size={22} /></div>
+                      )}
+                      {isWanted(t.tmdbId) && (
+                        <span className="absolute right-1.5 top-1.5 rounded-full bg-accent/90 p-1 text-white" title="Subscribed">
+                          <Bell size={12} />
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 truncate text-xs text-muted group-hover:text-ink">
+                      {t.title} {t.year ? <span className="text-faint">({t.year})</span> : null}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-6 flex justify-center">
+                {comingLoading ? (
+                  <Loader2 size={20} className="animate-spin text-faint" />
+                ) : comingPage < comingTotal ? (
+                  <button className="btn btn-ghost text-muted" onClick={loadMoreComing}>
+                    Load more
+                  </button>
+                ) : comingItems.length > 0 ? (
                   <p className="text-xs text-faint">That&apos;s everything.</p>
                 ) : null}
               </div>
@@ -633,7 +748,15 @@ export default function DiscoverPage() {
       </section>
       )}
 
-      {seed && <TitleModal seed={seed} onClose={() => setSeed(null)} />}
+      {seed && (
+        <TitleModal
+          seed={seed}
+          onClose={() => {
+            setSeed(null);
+            refreshWanted();
+          }}
+        />
+      )}
     </div>
   );
 }

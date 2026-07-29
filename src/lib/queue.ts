@@ -81,7 +81,8 @@ export async function enqueueJob(
     | "auto-follow"
     | "retention"
     | "recover-stuck"
-    | "retry-failed",
+    | "retry-failed"
+    | "wanted-scan",
 ): Promise<void> {
   await grabQueue().add(name, { downloadId: "" }, { removeOnComplete: true, removeOnFail: true });
 }
@@ -94,6 +95,7 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
   { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
   { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },
+  { name: "wanted-scan", every: 6 * HOUR, jobId: "wanted-scan-repeat" },
   { name: "retention", every: 24 * HOUR, jobId: "retention-repeat" },
 ];
 

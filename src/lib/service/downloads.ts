@@ -9,6 +9,7 @@ import {
   isSingleSeasonPack,
   isEpisodeMatch,
   releaseTitleMatches,
+  parseRelease,
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
 import { makeS3, deleteObject } from "../storage/s3";
@@ -293,6 +294,8 @@ export async function grabMovie(opts: {
   tmdbId: number;
   title: string;
   year?: number | null;
+  /** For subscriptions: only grab a real (non-cam, ≥720p) release — wait, don't grab a cam. */
+  requireNonCam?: boolean;
 }): Promise<DownloadDTO | null> {
   const cfg = await getConfig();
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
@@ -300,7 +303,14 @@ export async function grabMovie(opts: {
   void logActivity(`Searching sources for “${opts.title}”…`, { kind: "search", title: opts.title });
   const results = await prowlarr.search(q, { categories: categoriesForKind("MOVIE"), limit: 60 });
   const failed = await failedSourcesFor(opts.tmdbId, null, null);
-  const chosen = pickAutoRelease(excludeFailed(results, failed), {
+  let pool = excludeFailed(results, failed);
+  if (opts.requireNonCam) {
+    pool = pool.filter((r) => {
+      const p = parseRelease(r.title);
+      return !p.isCam && !!p.resolution && p.resolution !== "480p";
+    });
+  }
+  const chosen = pickAutoRelease(pool, {
     minSeeders: cfg.prefs.minSeeders,
     floorGB: 0.2,
   });

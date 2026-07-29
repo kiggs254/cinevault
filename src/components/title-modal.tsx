@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Plus, Check, Tv, Film, Star, Play } from "lucide-react";
+import { X, Download, Loader2, Plus, Check, Tv, Film, Star, Play, Bell } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 import { TrailerModal, type TrailerSeed } from "./trailer-modal";
 import { EpisodeBrowser } from "./episode-browser";
@@ -61,6 +61,7 @@ interface Details {
   status?: string | null;
   seasons?: Season[];
   ownedMovie?: boolean;
+  subscribed?: boolean;
   voteAverage?: number | null;
   voteCount?: number | null;
   runtime?: number | null;
@@ -82,6 +83,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const [msg, setMsg] = useState("");
   const [following, setFollowing] = useState(false);
   const [followId, setFollowId] = useState<string | null>(null);
+  const [subscribed, setSubscribed] = useState(false);
   const [trailer, setTrailer] = useState<TrailerSeed | null>(null);
 
   useEffect(() => {
@@ -92,6 +94,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         if (!alive) return;
         setDetails(d.details);
         setFollowId(d.details.followId ?? null);
+        setSubscribed(!!d.details.subscribed);
       })
       .catch(() => setMsg("Couldn't load details."))
       .finally(() => alive && setLoading(false));
@@ -115,6 +118,29 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "movie", title: details?.title ?? seed.title, year: details?.year ?? seed.year }),
       });
       setMsg("Queued — 720p, downloading to your library.");
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleSubscribe() {
+    setBusy(true);
+    setMsg("");
+    try {
+      if (subscribed) {
+        await jsonFetch(`/api/wanted/${seed.tmdbId}`, { method: "DELETE" });
+        setSubscribed(false);
+        setMsg("Unsubscribed.");
+      } else {
+        await jsonFetch("/api/wanted", {
+          method: "POST",
+          body: JSON.stringify({ tmdbId: seed.tmdbId }),
+        });
+        setSubscribed(true);
+        setMsg("Subscribed — we'll grab it automatically once a real release appears.");
+      }
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -209,6 +235,14 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const backdrop = details?.backdropUrl || seed.posterUrl;
 
   const isMovie = seed.mediaType === "movie";
+  // A movie not yet out (status other than "Released", or a future release date)
+  // can't be grabbed yet — offer a subscription instead of a download.
+  const releaseTs = details?.releaseDate ? Date.parse(details.releaseDate) : NaN;
+  const isUpcomingMovie =
+    isMovie &&
+    !details?.ownedMovie &&
+    ((!!details?.status && details.status !== "Released") ||
+      (Number.isFinite(releaseTs) && releaseTs > Date.now()));
   const rating =
     typeof details?.voteAverage === "number" && details.voteAverage > 0 ? details.voteAverage : null;
   const ratingCount = formatCount(details?.voteCount);
@@ -315,10 +349,27 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
               </button>
 
               {seed.mediaType === "movie" ? (
-                <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy || details?.ownedMovie}>
-                  {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                  {details?.ownedMovie ? "In your library" : "Download (720p)"}
-                </button>
+                isUpcomingMovie ? (
+                  <button
+                    className={`btn w-full ${subscribed ? "btn-ghost" : "btn-accent"}`}
+                    onClick={toggleSubscribe}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : subscribed ? (
+                      <Check size={15} />
+                    ) : (
+                      <Bell size={15} />
+                    )}
+                    {subscribed ? "Subscribed — auto-download" : "Notify + auto-download when out"}
+                  </button>
+                ) : (
+                  <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy || details?.ownedMovie}>
+                    {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                    {details?.ownedMovie ? "In your library" : "Download (720p)"}
+                  </button>
+                )
               ) : (
                 <>
                   {releasedSeasons.length > 0 && (

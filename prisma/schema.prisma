@@ -154,6 +154,23 @@ model FollowedShow {
   @@index([autoDownload])
 }
 
+/** A subscribed upcoming/unavailable movie: auto-download once a real (non-cam) release appears. */
+model WantedMovie {
+  id            String    @id @default(cuid())
+  tmdbId        Int       @unique
+  title         String
+  year          Int?
+  posterUrl     String?
+  overview      String?   @db.Text
+  releaseDate   DateTime? // TMDB primary release date (informational)
+  status        String    @default("waiting") // waiting | grabbed
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+}
+
 /// A cached, personalized suggestion (a TMDB title, not a release). Surfaced in
 /// the redesigned Discover feed; the user can add (download/follow) or dismiss.
 model Recommendation {

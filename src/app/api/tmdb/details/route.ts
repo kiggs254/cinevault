@@ -38,7 +38,8 @@ export async function GET(req: Request) {
   if (type === "movie") {
     const d = await getMovieDetails(cfg.tmdb.apiKey, id);
     if (!d) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ details: { ...d, ownedMovie } });
+    const wanted = await prisma.wantedMovie.findUnique({ where: { tmdbId: id }, select: { status: true } });
+    return NextResponse.json({ details: { ...d, ownedMovie, subscribed: !!wanted } });
   }
 
   const d = await getTvDetails(cfg.tmdb.apiKey, id);

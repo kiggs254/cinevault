@@ -10,6 +10,7 @@ import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } fro
 import { scanWatches } from "../lib/service/watches";
 import { scanFollowedShows, autoFollowFromJellyfin } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
+import { scanWantedMovies } from "../lib/service/wanted";
 import { runRetention } from "../lib/service/retention";
 import { startTelegramBot } from "../lib/telegram/bot";
 import { notify } from "../lib/telegram/client";
@@ -700,6 +701,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   "follow-scan": scanFollowedShows,
   "reco-refresh": refreshRecommendations,
   "auto-follow": autoFollowFromJellyfin,
+  "wanted-scan": scanWantedMovies,
   retention: runRetention,
 };
 

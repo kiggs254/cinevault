@@ -333,6 +333,34 @@ export async function discoverTv(
   };
 }
 
+/**
+ * Paginated list of movies not yet released (primary release date ≥ today),
+ * most-anticipated first. Powers the Discover “Coming Soon” tab and the
+ * subscribe-to-upcoming feature.
+ */
+export async function getUpcomingMovies(
+  apiKey: string,
+  opts: { page?: number } = {},
+): Promise<DiscoverPage> {
+  const today = new Date().toISOString().slice(0, 10);
+  const data = await tmdbFetch<{ results?: unknown[]; page?: number; total_pages?: number }>(
+    apiKey,
+    `/discover/movie`,
+    {
+      sort_by: "popularity.desc",
+      include_adult: "false",
+      "primary_release_date.gte": today,
+      "with_release_type": "2|3", // theatrical / theatrical-limited (excludes already-streaming)
+      page: String(Math.min(500, Math.max(1, Math.floor(opts.page ?? 1)))),
+    },
+  );
+  return {
+    results: toTitles(data, "movie").filter((t) => t.posterUrl),
+    page: data?.page ?? opts.page ?? 1,
+    totalPages: Math.min(data?.total_pages ?? 1, 500),
+  };
+}
+
 export async function getGenres(
   apiKey: string,
   type: TmdbMediaType,
