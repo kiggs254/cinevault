@@ -384,11 +384,17 @@ async function handleStall(
   return info;
 }
 
-/** Stream a URL to a local file (no full-file buffering). */
-async function downloadToFile(url: string, dest: string): Promise<void> {
+/** Stream a URL to a local file (no full-file buffering); reports bytes as they arrive. */
+async function downloadToFile(
+  url: string,
+  dest: string,
+  onBytes?: (n: number) => void,
+): Promise<void> {
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`TorBox download failed: ${res.status}`);
-  await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(dest));
+  const src = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+  if (onBytes) src.on("data", (c: Buffer) => onBytes(c.length));
+  await pipeline(src, createWriteStream(dest));
 }
 
 /**
@@ -462,13 +468,24 @@ async function downloadViaTorbox(
 
   const dir = path.join(cfg.prefs.downloadDir, `torbox-${id}`);
   await mkdir(dir, { recursive: true });
+  // Report download progress as the files stream in (TorBox pull can be many GB).
+  const totalBytes = info.files.reduce((a, f) => a + (f.size || 0), 0);
+  let done = 0;
+  const emit = throttle(() => {
+    const pct = totalBytes ? Math.min(99, Math.round((done / totalBytes) * 100)) : 0;
+    void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
+    void publishProgress({ type: "progress", downloadId: id, status: "DOWNLOADING", progress: pct });
+  }, 1000);
   let got = 0;
   for (const f of info.files) {
     const link = await tb.requestDownloadLink(added.torrentId, f.id);
     if (!link) continue;
     const name = (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_");
     try {
-      await downloadToFile(link, path.join(dir, name));
+      await downloadToFile(link, path.join(dir, name), (n) => {
+        done += n;
+        emit();
+      });
       got++;
     } catch (e) {
       console.error("[torbox] file download failed:", (e as Error).message);
