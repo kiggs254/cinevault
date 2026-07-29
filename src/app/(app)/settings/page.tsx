@@ -89,6 +89,14 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    group: "downloads",
+    title: "TorBox (debrid)",
+    desc: "Optional but recommended. With a TorBox API key, downloads go through TorBox first — instant when the release is cached, and no seeders/stalls/re-sourcing either way. Falls back to qBittorrent automatically when TorBox can't fetch a release. Get your key at torbox.app → Settings → API.",
+    fields: [
+      { k: "torboxApiKey", label: "TorBox API key", type: "secret" },
+    ],
+  },
+  {
     group: "notifications",
     title: "Telegram bot",
     desc: "Chat with the agent and get push notifications for new episodes, discoveries, and completed downloads. Create a bot with @BotFather, then message it to link. Share with family by adding their IDs to the allow-list — they message the bot once and it replies with their ID.",

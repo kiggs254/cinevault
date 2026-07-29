@@ -21,7 +21,7 @@ const ALLOWED_SETTINGS = new Set([
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
-  "jellyfinApiKey", "telegramBotToken",
+  "jellyfinApiKey", "telegramBotToken", "torboxApiKey",
 ]);
 
 export async function GET() {

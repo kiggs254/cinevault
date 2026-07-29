@@ -38,6 +38,7 @@ export interface ResolvedConfig {
   };
   jellyfin: { url?: string; apiKey?: string; userId?: string };
   telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
+  torbox: { apiKey?: string };
   appUrl: string; // public base URL of this app (for deep-link CTAs)
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
@@ -54,6 +55,7 @@ const SECRET_KEYS = [
   "tmdbApiKey",
   "jellyfinApiKey",
   "telegramBotToken",
+  "torboxApiKey",
 ] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -162,6 +164,7 @@ export async function getConfig(): Promise<ResolvedConfig> {
       chatId: str(settings.telegramChatId) ?? env.TELEGRAM_CHAT_ID,
       allowedIds: parseIds(str(settings.telegramAllowedIds) ?? env.TELEGRAM_ALLOWED_IDS),
     },
+    torbox: { apiKey: dec("torboxApiKey") ?? env.TORBOX_API_KEY },
     appUrl: str(settings.appUrl) ?? env.APP_URL,
     retention: {
       autoDeleteWatched: settings.autoDeleteWatched === true,
@@ -189,6 +192,7 @@ export async function getMaskedConfig() {
     tmdbApiKey: !!env.TMDB_API_KEY,
     jellyfinApiKey: !!env.JELLYFIN_API_KEY,
     telegramBotToken: !!env.TELEGRAM_BOT_TOKEN,
+    torboxApiKey: !!env.TORBOX_API_KEY,
   };
   const secretsSet = Object.fromEntries(
     SECRET_KEYS.map((k) => [k, !!secrets[k] || envSecretPresent[k]]),

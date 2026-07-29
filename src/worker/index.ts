@@ -1,5 +1,9 @@
 import "dotenv/config";
 import path from "node:path";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
 import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
@@ -10,9 +14,10 @@ import { runRetention } from "../lib/service/retention";
 import { startTelegramBot } from "../lib/telegram/bot";
 import { notify } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
-import { getConfig } from "../lib/config";
+import { getConfig, type ResolvedConfig } from "../lib/config";
 import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
 import { resolveExtraTrackers } from "../lib/torrent/trackers";
+import { TorboxClient, type TorboxTorrent } from "../lib/torbox/client";
 import {
   reSource,
   grabSeason,
@@ -38,6 +43,8 @@ function epTag(season: number | null, episode: number | null): string {
 const CATEGORY = "moviehub";
 const POLL_MS = 2000;
 const REGISTER_TIMEOUT_MS = 90_000;
+const TORBOX_WAIT_MS = 20 * 60 * 1000; // max wait for TorBox to fetch an uncached torrent
+const TORBOX_POLL_MS = 5000;
 const STALL_MS = 10 * 60 * 1000; // grace for a connected-but-slow torrent
 const DEAD_MS = 2 * 60 * 1000; // grace when qBittorrent reports no seeders at all
 const MISSING_MS = 60 * 1000; // grace before treating a vanished torrent as a stall
@@ -377,56 +384,160 @@ async function handleStall(
   return info;
 }
 
+/** Stream a URL to a local file (no full-file buffering). */
+async function downloadToFile(url: string, dest: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok || !res.body) throw new Error(`TorBox download failed: ${res.status}`);
+  await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(dest));
+}
+
+/**
+ * Try to fetch a release via TorBox (debrid): add the magnet, wait until TorBox
+ * has the files (instant when cached, no seeders/stalls), then pull them into a
+ * local dir that the normal organize→S3 pipeline uploads from. Returns the dir,
+ * or null to fall back to qBittorrent (rate-limited, errored, or too slow).
+ */
+async function downloadViaTorbox(
+  id: string,
+  dl: { magnet: string; title: string; season: number | null; episode: number | null },
+  cfg: ResolvedConfig,
+): Promise<string | null> {
+  const tb = new TorboxClient(cfg.torbox);
+  const added = await tb.addMagnet(dl.magnet);
+  if (!added) return null;
+  void logActivity(`TorBox: fetching ${dl.title}${epTag(dl.season, dl.episode)}…`, {
+    kind: "download",
+    title: dl.title,
+  });
+
+  let info: TorboxTorrent | null = null;
+  const deadline = Date.now() + TORBOX_WAIT_MS;
+  while (Date.now() < deadline) {
+    info = await tb.get(added.torrentId);
+    if (info && (info.download_finished || info.download_present) && info.files.length) break;
+    if (info?.download_state && /error|fail|dead|stall/i.test(info.download_state)) {
+      info = null;
+      break;
+    }
+    await publishProgress({
+      type: "progress",
+      downloadId: id,
+      status: "DOWNLOADING",
+      progress: Math.min(99, Math.round((info?.progress ?? 0) * 100)),
+    });
+    await sleep(TORBOX_POLL_MS);
+  }
+  if (!info || !(info.download_finished || info.download_present) || !info.files.length) {
+    await tb.remove(added.torrentId);
+    return null; // fall back to qBittorrent
+  }
+
+  const dir = path.join(cfg.prefs.downloadDir, `torbox-${id}`);
+  await mkdir(dir, { recursive: true });
+  let got = 0;
+  for (const f of info.files) {
+    const link = await tb.requestDownloadLink(added.torrentId, f.id);
+    if (!link) continue;
+    const name = (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_");
+    try {
+      await downloadToFile(link, path.join(dir, name));
+      got++;
+    } catch (e) {
+      console.error("[torbox] file download failed:", (e as Error).message);
+    }
+  }
+  await tb.remove(added.torrentId); // we have the files — free the TorBox slot
+  if (!got) {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    return null;
+  }
+  return dir;
+}
+
 async function processDownload(id: string): Promise<void> {
   const dl = await prisma.download.findUnique({ where: { id } });
   if (!dl) return;
   if (!dl.magnet) throw new Error("Download has no torrent source");
 
   const cfg = await getConfig();
-  if (!cfg.qbit.url) throw new Error("qBittorrent is not configured (see Settings)");
   if (!cfg.s3.endpoint || !cfg.s3.bucket) {
     throw new Error("S3 storage is not fully configured (see Settings)");
   }
 
-  const qb = new QbClient(cfg.qbit);
-  await qb.ensureCategory(CATEGORY);
   await setStatus(id, "DOWNLOADING", dl.progress);
   void logActivity(`Downloading ${dl.title}${epTag(dl.season, dl.episode)}…`, {
     kind: "download",
     title: dl.title,
   });
 
-  // Find the torrent by info-hash (survives qBittorrent's dedup, which keeps the
-  // original tag) or by tag; add it only if genuinely absent.
-  const expectedHash =
-    dl.infoHash ?? (dl.magnet.startsWith("magnet:") ? parseInfoHash(dl.magnet) : undefined);
-  // The info-hash is identity (trust it). A tag lookup is only trusted when the
-  // torrent it returns really is this release — this both prevents binding to a
-  // sibling under concurrent adds and self-heals a row already cross-linked to
-  // the wrong hash (it re-resolves / re-adds its own torrent below).
-  let info = expectedHash ? await qb.getByHash(expectedHash) : undefined;
-  if (!info) {
-    const tagged = await qb.getByTag(id);
-    if (tagged && torrentMatchesRelease(tagged.name, dl.releaseName)) info = tagged;
-  }
-  if (!info) {
-    const isMagnet = dl.magnet.startsWith("magnet:");
-    const beforeHashes = await categoryHashes(qb);
-    await qb.addTorrent({
-      magnet: isMagnet ? dl.magnet : undefined,
-      torrentUrl: isMagnet ? undefined : dl.magnet,
-      savePath: cfg.prefs.downloadDir,
-      category: CATEGORY,
-      tag: id,
-    });
-    info = await waitForTorrent(qb, id, expectedHash, dl.releaseName, beforeHashes, REGISTER_TIMEOUT_MS);
-  }
-  if (!info) throw new Error("Torrent failed to register in qBittorrent");
+  // qBittorrent client — the fallback provider, and used for sibling cleanup.
+  const qb = cfg.qbit.url ? new QbClient(cfg.qbit) : null;
 
-  await prisma.download.update({ where: { id }, data: { qbitHash: info.hash } });
+  // Where the finished files land locally + how to clean up after upload. The
+  // provider (TorBox or qBittorrent) sets both; the organize→S3 pipeline below
+  // is shared.
+  let contentPath: string;
+  let cleanup: () => Promise<void> = async () => {};
 
-  // Download, auto-switching source if a torrent stalls for STALL_MS.
-  info = await downloadWithReSource(qb, id, info, cfg);
+  // Provider: TorBox first (instant when cached, no seeders/stalls/re-source),
+  // then qBittorrent. TorBox takes magnets only; .torrent URLs go straight to qBit.
+  const tbDir =
+    cfg.torbox.apiKey && dl.magnet.startsWith("magnet:")
+      ? await downloadViaTorbox(
+          id,
+          { magnet: dl.magnet, title: dl.title, season: dl.season, episode: dl.episode },
+          cfg,
+        ).catch((e) => {
+          console.error("[torbox]", (e as Error).message);
+          return null;
+        })
+      : null;
+
+  if (tbDir) {
+    contentPath = tbDir;
+    cleanup = async () => {
+      if (cfg.prefs.deleteAfterUpload) await rm(tbDir, { recursive: true, force: true }).catch(() => {});
+    };
+  } else {
+    if (!qb) throw new Error("qBittorrent is not configured (see Settings)");
+    await qb.ensureCategory(CATEGORY);
+
+    // Find the torrent by info-hash (survives qBittorrent's dedup, which keeps the
+    // original tag) or by tag; add it only if genuinely absent.
+    const expectedHash =
+      dl.infoHash ?? (dl.magnet.startsWith("magnet:") ? parseInfoHash(dl.magnet) : undefined);
+    // The info-hash is identity (trust it). A tag lookup is only trusted when the
+    // torrent it returns really is this release — prevents binding to a sibling
+    // under concurrent adds and self-heals a row cross-linked to the wrong hash.
+    let info = expectedHash ? await qb.getByHash(expectedHash) : undefined;
+    if (!info) {
+      const tagged = await qb.getByTag(id);
+      if (tagged && torrentMatchesRelease(tagged.name, dl.releaseName)) info = tagged;
+    }
+    if (!info) {
+      const isMagnet = dl.magnet.startsWith("magnet:");
+      const beforeHashes = await categoryHashes(qb);
+      await qb.addTorrent({
+        magnet: isMagnet ? dl.magnet : undefined,
+        torrentUrl: isMagnet ? undefined : dl.magnet,
+        savePath: cfg.prefs.downloadDir,
+        category: CATEGORY,
+        tag: id,
+      });
+      info = await waitForTorrent(qb, id, expectedHash, dl.releaseName, beforeHashes, REGISTER_TIMEOUT_MS);
+    }
+    if (!info) throw new Error("Torrent failed to register in qBittorrent");
+
+    await prisma.download.update({ where: { id }, data: { qbitHash: info.hash } });
+
+    // Download, auto-switching source if a torrent stalls for STALL_MS.
+    info = await downloadWithReSource(qb, id, info, cfg);
+    contentPath = info.content_path || path.join(info.save_path, info.name);
+    const hash = info.hash;
+    cleanup = async () => {
+      if (cfg.prefs.deleteAfterUpload) await qb.delete([hash], true).catch(() => {});
+    };
+  }
 
   // Organize + enrich, then upload.
   await setStatus(id, "UPLOADING", 0);
@@ -450,7 +561,6 @@ async function processDownload(id: string): Promise<void> {
   );
 
   const s3 = makeS3(cfg.s3);
-  const contentPath = info.content_path || path.join(info.save_path, info.name);
   const emitUpload = throttle((uploaded: number, total: number) => {
     const pct = total > 0 ? (uploaded / total) * 100 : 0;
     void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
@@ -500,11 +610,8 @@ async function processDownload(id: string): Promise<void> {
     title: organized.cleanTitle,
   });
 
-  await dedupeCompletedEpisode(qb, id);
-
-  if (cfg.prefs.deleteAfterUpload) {
-    await qb.delete([info.hash], true).catch(() => {});
-  }
+  if (qb) await dedupeCompletedEpisode(qb, id);
+  await cleanup();
 }
 
 /**

@@ -67,6 +67,7 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   TELEGRAM_ALLOWED_IDS: z.string().optional(),
+  TORBOX_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;
