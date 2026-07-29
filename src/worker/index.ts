@@ -403,8 +403,24 @@ async function downloadViaTorbox(
   cfg: ResolvedConfig,
 ): Promise<string | null> {
   const tb = new TorboxClient(cfg.torbox);
-  const added = await tb.addMagnet(dl.magnet);
-  if (!added) return null;
+  let added: { torrentId: number; hash?: string } | null;
+  if (dl.magnet.startsWith("magnet:")) {
+    added = await tb.addMagnet(dl.magnet);
+  } else {
+    // Indexers usually return a .torrent URL, not a magnet — fetch the file and
+    // hand the bytes to TorBox (createtorrent accepts a file upload).
+    const res = await fetch(dl.magnet).catch(() => null);
+    if (!res || !res.ok) {
+      console.log(`[torbox] .torrent fetch failed for ${dl.title}: ${res?.status ?? "network"}`);
+      return null;
+    }
+    added = await tb.addTorrentFile(await res.arrayBuffer());
+  }
+  if (!added) {
+    console.log(`[torbox] add rejected for ${dl.title} — using qBittorrent (bad key / rate-limited?)`);
+    return null;
+  }
+  console.log(`[torbox] queued ${dl.title} (torrent ${added.torrentId})`);
   void logActivity(`TorBox: fetching ${dl.title}${epTag(dl.season, dl.episode)}…`, {
     kind: "download",
     title: dl.title,
@@ -482,7 +498,7 @@ async function processDownload(id: string): Promise<void> {
   // Provider: TorBox first (instant when cached, no seeders/stalls/re-source),
   // then qBittorrent. TorBox takes magnets only; .torrent URLs go straight to qBit.
   const tbDir =
-    cfg.torbox.apiKey && dl.magnet.startsWith("magnet:")
+    cfg.torbox.apiKey && /^(magnet:|https?:)/i.test(dl.magnet)
       ? await downloadViaTorbox(
           id,
           { magnet: dl.magnet, title: dl.title, season: dl.season, episode: dl.episode },

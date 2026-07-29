@@ -55,6 +55,27 @@ export class TorboxClient {
     return { torrentId: tid, hash: j.data?.hash };
   }
 
+  /** Queue a .torrent file's bytes on TorBox — for indexers that hand out .torrent URLs, not magnets. */
+  async addTorrentFile(
+    bytes: ArrayBuffer,
+    name = "upload.torrent",
+  ): Promise<{ torrentId: number; hash?: string } | null> {
+    const form = new FormData();
+    form.set("file", new Blob([bytes], { type: "application/x-bittorrent" }), name);
+    form.set("seed", "3");
+    const res = await fetch(`${BASE}/torrents/createtorrent`, {
+      method: "POST",
+      headers: this.headers(),
+      body: form,
+    });
+    const j = (await res.json().catch(() => null)) as
+      | { success?: boolean; data?: { torrent_id?: number; hash?: string } | null }
+      | null;
+    const tid = j?.data?.torrent_id;
+    if (!j?.success || typeof tid !== "number") return null;
+    return { torrentId: tid, hash: j.data?.hash };
+  }
+
   /** Status + file list for one torrent (bypasses TorBox's ~10-min status cache). */
   async get(torrentId: number): Promise<TorboxTorrent | null> {
     const res = await fetch(`${BASE}/torrents/mylist?id=${torrentId}&bypass_cache=true`, {
