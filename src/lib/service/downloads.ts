@@ -407,11 +407,17 @@ export async function grabEpisode(o: {
       releaseTitleMatches(r.title, show.title),
   );
   const failed = await failedSourcesFor(show.tmdbId, ep.seasonNumber, ep.episodeNumber);
-  const best = pickAutoRelease(excludeFailed(matched, failed), {
-    minSeeders: cfg.prefs.minSeeders,
-    floorGB: 0.05,
-  });
+  const usable = excludeFailed(matched, failed);
+  const best = pickAutoRelease(usable, { minSeeders: cfg.prefs.minSeeders, floorGB: 0.05 });
   if (!best) {
+    // Funnel so "No source yet" is diagnosable: which stage dropped everything.
+    console.log(
+      `[grab] no-source ${label}: prowlarr=${results.length} matched=${matched.length} ` +
+        `usable=${usable.length} minSeeders=${cfg.prefs.minSeeders}` +
+        (results.length && !matched.length
+          ? ` | samples: ${results.slice(0, 3).map((r) => r.title).join("  ·  ")}`
+          : ""),
+    );
     void logActivity(`No source yet — ${label}`, { kind: "warn", title: show.title });
     return false;
   }

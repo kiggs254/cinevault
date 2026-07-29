@@ -22,6 +22,22 @@ export interface ProwlarrConfig {
   apiKey?: string;
 }
 
+/**
+ * Normalise a title for the Torznab query. Indexers return ZERO hits when the
+ * query contains an apostrophe ("Margo's Got Money Troubles S01E04" → 0, but
+ * "Margos Got Money Troubles S01E04" → 84). Drop apostrophes so the word stays
+ * intact, THEN collapse other punctuation to spaces (dots/colons/hyphens
+ * tokenise the same). Release-title matching normalises separately, so this only
+ * affects what we ASK indexers for.
+ */
+export function cleanSearchQuery(q: string): string {
+  return q
+    .replace(/['’`´]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Prowlarr aggregate-search client (Torznab under the hood). */
 export class ProwlarrClient {
   private base: string;
@@ -39,7 +55,7 @@ export class ProwlarrClient {
     opts: { categories?: number[]; limit?: number; indexerIds?: number[] } = {},
   ): Promise<TorrentResult[]> {
     const params = new URLSearchParams();
-    params.set("query", query);
+    params.set("query", cleanSearchQuery(query));
     params.set("type", "search");
     params.set("limit", String(opts.limit ?? 60));
     for (const c of opts.categories ?? []) params.append("categories", String(c));
