@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: sh -c "pnpm db:push && pnpm start"
+    command: sh -c "pnpm db:push --accept-data-loss && pnpm start"
     restart: unless-stopped
     environment:
       SERVICE_FQDN_WEB_3000: ${SERVICE_FQDN_WEB_3000}
