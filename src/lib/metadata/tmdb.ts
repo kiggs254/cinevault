@@ -310,14 +310,23 @@ export interface DiscoverPage {
 /** Paginated TV discovery by streaming network (+ optional genre & min-rating). */
 export async function discoverTv(
   apiKey: string,
-  opts: { networkId?: number; genreIds?: number[]; minRating?: number; page?: number },
+  opts: { networkId?: number; genreIds?: number[]; minRating?: number; page?: number; sortBy?: string },
 ): Promise<DiscoverPage> {
+  const sortBy = opts.sortBy || "popularity.desc";
+  // "Top rated" needs a high vote floor or one-vote obscurities win; "Newest"
+  // wants a low floor (surface fresh shows) plus a today ceiling to hide
+  // future-dated placeholder entries.
+  const voteFloor =
+    sortBy === "vote_average.desc" ? "150" : sortBy === "first_air_date.desc" ? "10" : "20";
   const params: Record<string, string> = {
-    sort_by: "popularity.desc",
+    sort_by: sortBy,
     include_adult: "false",
-    "vote_count.gte": "20",
+    "vote_count.gte": voteFloor,
     page: String(Math.min(500, Math.max(1, Math.floor(opts.page ?? 1)))),
   };
+  if (sortBy === "first_air_date.desc") {
+    params["first_air_date.lte"] = new Date().toISOString().slice(0, 10);
+  }
   if (opts.networkId) params.with_networks = String(opts.networkId);
   if (opts.genreIds?.length) params.with_genres = opts.genreIds.join(",");
   if (opts.minRating && opts.minRating > 0) params["vote_average.gte"] = String(opts.minRating);

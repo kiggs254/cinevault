@@ -89,6 +89,11 @@ const RATINGS: { v: number; label: string }[] = [
   { v: 7, label: "7+" },
   { v: 8, label: "8+" },
 ];
+const SORTS: { v: string; label: string }[] = [
+  { v: "popularity.desc", label: "Popular" },
+  { v: "first_air_date.desc", label: "Newest" },
+  { v: "vote_average.desc", label: "Top rated" },
+];
 
 /* ------------------------------ component ----------------------------- */
 export default function DiscoverPage() {
@@ -116,6 +121,7 @@ export default function DiscoverPage() {
   const [network, setNetwork] = useState(NETWORKS[0].id);
   const [genre, setGenre] = useState(0);
   const [minRating, setMinRating] = useState(0);
+  const [sort, setSort] = useState("popularity.desc");
   const [netItems, setNetItems] = useState<NetTitle[]>([]);
   const [netPage, setNetPage] = useState(1);
   const [netTotal, setNetTotal] = useState(1);
@@ -143,6 +149,7 @@ export default function DiscoverPage() {
     const q = new URLSearchParams({ network: String(network), page: String(netPage + 1) });
     if (genre) q.set("genres", String(genre));
     if (minRating) q.set("rating", String(minRating));
+    if (sort) q.set("sort", sort);
     try {
       const d = await jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(
         `/api/discover/network?${q}`,
@@ -256,6 +263,7 @@ export default function DiscoverPage() {
     const q = new URLSearchParams({ network: String(network), page: "1" });
     if (genre) q.set("genres", String(genre));
     if (minRating) q.set("rating", String(minRating));
+    if (sort) q.set("sort", sort);
     jsonFetch<{ results: NetTitle[]; page: number; totalPages: number }>(`/api/discover/network?${q}`)
       .then((d) => {
         if (!alive) return;
@@ -268,7 +276,7 @@ export default function DiscoverPage() {
     return () => {
       alive = false;
     };
-  }, [tab, network, genre, minRating]);
+  }, [tab, network, genre, minRating, sort]);
 
   async function refreshRecs() {
     setRefreshing(true);
@@ -435,6 +443,16 @@ export default function DiscoverPage() {
             >
               {RATINGS.map((r) => (
                 <option key={r.v} value={r.v}>{r.label}</option>
+              ))}
+            </select>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="input max-w-[9rem] py-1.5 text-sm"
+              aria-label="Sort by"
+            >
+              {SORTS.map((s) => (
+                <option key={s.v} value={s.v}>{s.label}</option>
               ))}
             </select>
           </div>

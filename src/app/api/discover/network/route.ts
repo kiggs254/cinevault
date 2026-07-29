@@ -20,7 +20,11 @@ export async function GET(req: Request) {
     .filter((n) => Number.isInteger(n) && n > 0);
   const minRating = Number(url.searchParams.get("rating")) || undefined;
   const page = Number(url.searchParams.get("page")) || 1;
+  const sortParam = url.searchParams.get("sort") || "";
+  const sortBy = ["popularity.desc", "first_air_date.desc", "vote_average.desc"].includes(sortParam)
+    ? sortParam
+    : undefined;
 
-  const data = await discoverTv(cfg.tmdb.apiKey, { networkId, genreIds, minRating, page });
+  const data = await discoverTv(cfg.tmdb.apiKey, { networkId, genreIds, minRating, page, sortBy });
   return NextResponse.json(data, { headers });
 }
