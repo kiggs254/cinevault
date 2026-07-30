@@ -86,6 +86,8 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const [subscribed, setSubscribed] = useState(false);
   const [added, setAdded] = useState(false); // sticky "✓ Added" state for the primary button
   const [playing, setPlaying] = useState(false); // resolving the Jellyfin deep link
+  const [picking, setPicking] = useState(false); // TV season picker open
+  const [selSeasons, setSelSeasons] = useState<Set<number>>(new Set());
   const [trailer, setTrailer] = useState<TrailerSeed | null>(null);
 
   useEffect(() => {
@@ -184,14 +186,9 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     setMsg(`Adding Season ${season} to your library — episodes appear as they're ready.`);
   }
 
-  async function downloadAllSeasons() {
-    const seasons = (details?.seasons ?? [])
-      .filter((s) => s.released && s.seasonNumber >= 1)
-      .map((s) => s.seasonNumber);
-    if (seasons.length === 0) {
-      setMsg("No released seasons yet.");
-      return;
-    }
+  /** Queue the chosen seasons. */
+  async function addSeasons(seasons: number[]) {
+    if (seasons.length === 0) return;
     setBusy(true);
     setMsg("");
     try {
@@ -206,6 +203,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         }),
       });
       setAdded(true);
+      setPicking(false);
       setMsg(
         `Adding ${seasons.length} season${seasons.length === 1 ? "" : "s"} to your library — episodes appear as they're ready.`,
       );
@@ -214,6 +212,26 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
     } finally {
       setBusy(false);
     }
+  }
+
+  /** "Add to Library": one season → add now; multiple → open the season picker. */
+  function onAddToLibrary() {
+    const released = releasedSeasons.map((s) => s.seasonNumber);
+    if (released.length <= 1) {
+      addSeasons(released);
+      return;
+    }
+    setSelSeasons(new Set(released)); // all selected initially
+    setPicking(true);
+  }
+
+  function toggleSeason(n: number) {
+    setSelSeasons((cur) => {
+      const next = new Set(cur);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
   }
 
   async function downloadEpisode(season: number, episode: number) {
@@ -416,10 +434,10 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                       {playing ? "Opening…" : "Play on Jellyfin"}
                     </button>
                   )}
-                  {releasedSeasons.length > 0 && (
+                  {releasedSeasons.length > 0 && !picking && (
                     <button
                       className={`btn mb-3 w-full ${anySeasonOwned || added ? "btn-ghost" : "btn-accent"}`}
-                      onClick={downloadAllSeasons}
+                      onClick={onAddToLibrary}
                       disabled={busy || allSeasonsOwned || added}
                     >
                       {busy ? (
@@ -435,10 +453,45 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                           ? "Added — episodes appear as they're ready"
                           : allSeasonsOwned
                             ? "All seasons in your library"
-                            : releasedSeasons.length > 1
-                              ? `Add all ${releasedSeasons.length} seasons`
-                              : "Add season to my library"}
+                            : "Add to Library"}
                     </button>
+                  )}
+                  {picking && (
+                    <div className="mb-3 rounded-lg border border-border bg-surface-2 p-3">
+                      <p className="label mb-2">Which seasons? (only pick what you'll watch)</p>
+                      <div className="mb-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+                        {releasedSeasons.map((s) => {
+                          const on = selSeasons.has(s.seasonNumber);
+                          return (
+                            <button
+                              key={s.seasonNumber}
+                              type="button"
+                              onClick={() => toggleSeason(s.seasonNumber)}
+                              className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
+                                on ? "border-accent bg-accent/10 text-ink" : "border-border text-muted hover:text-ink"
+                              }`}
+                            >
+                              {on && <Check size={12} className="flex-none" />} S{s.seasonNumber}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          className="btn btn-accent flex-1"
+                          onClick={() => addSeasons([...selSeasons].sort((a, b) => a - b))}
+                          disabled={busy || selSeasons.size === 0}
+                        >
+                          {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                          {busy
+                            ? "Adding…"
+                            : `Add ${selSeasons.size} season${selSeasons.size === 1 ? "" : "s"}`}
+                        </button>
+                        <button className="btn btn-ghost" onClick={() => setPicking(false)} disabled={busy}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   )}
                   <div className="mb-3 flex items-center justify-between">
                     <p className="label">Episodes</p>

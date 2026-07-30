@@ -17,7 +17,7 @@ import {
   HardDrive,
   Users,
   Send,
-  Ticket,
+  BookOpen,
   type LucideIcon,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
@@ -31,7 +31,7 @@ const BASE_NAV = [
   { href: "/library", label: "Library", icon: Library },
   { href: "/discover", label: "Discover", icon: Compass },
   { href: "/chat", label: "Assistant", icon: Sparkles },
-  { href: "/invite", label: "Invite", icon: Ticket },
+  { href: "/guide", label: "Guidelines", icon: BookOpen },
 ];
 
 /** Admins additionally see the raw download queue, members list, and settings. */
@@ -52,7 +52,7 @@ function bottomFor(role?: string) {
     { href: "/discover", label: "Discover", icon: Compass },
     role === "admin"
       ? { href: "/downloads", label: "Downloads", icon: Download }
-      : { href: "/invite", label: "Invite", icon: Ticket },
+      : { href: "/guide", label: "Guide", icon: BookOpen },
     { href: "/library", label: "Library", icon: Library },
     { href: "/chat", label: "Assistant", icon: Sparkles },
   ];
@@ -320,11 +320,11 @@ export function MobileTopBar() {
           {me?.role === "admin" && (
             <>
               <Link
-                href="/invite"
-                aria-label="Invite"
-                className={`rounded-lg p-2 ${isActive("/invite", pathname) ? "text-accent" : "text-muted"}`}
+                href="/guide"
+                aria-label="Guidelines"
+                className={`rounded-lg p-2 ${isActive("/guide", pathname) ? "text-accent" : "text-muted"}`}
               >
-                <Ticket size={19} />
+                <BookOpen size={19} />
               </Link>
               <Link
                 href="/users"
