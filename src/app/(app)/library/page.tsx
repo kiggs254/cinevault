@@ -68,6 +68,15 @@ export default function LibraryPage() {
   const [type, setType] = useState<"all" | "movie" | "tv">("all");
   const [genre, setGenre] = useState("");
   const [query, setQuery] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Only the admin sees raw filenames / sizes / open-raw; members watch via Jellyfin.
+  useEffect(() => {
+    fetch("/api/me", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setIsAdmin(d?.role === "admin"))
+      .catch(() => {});
+  }, []);
 
   const allGenres = useMemo(
     () => [...new Set(titles.flatMap((t) => t.genres ?? []))].sort((a, b) => a.localeCompare(b)),
@@ -236,9 +245,11 @@ export default function LibraryPage() {
                     )}
                   </div>
                   <p className="mt-1.5 truncate text-xs text-ink">{t.title}</p>
-                  <p className="mono truncate text-[11px] text-faint">
-                    {t.downloading && t.count === 0 ? "Adding to your library…" : formatBytes(t.sizeBytes)}
-                  </p>
+                  {(t.downloading || isAdmin) && (
+                    <p className="mono truncate text-[11px] text-faint">
+                      {t.downloading ? "Adding to your library…" : formatBytes(t.sizeBytes)}
+                    </p>
+                  )}
                 </button>
               ))}
             </div>
@@ -260,7 +271,9 @@ export default function LibraryPage() {
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold text-ink">{active.title}</h2>
                 <p className="text-xs text-muted">
-                  {active.kind} {active.year ? `· ${active.year}` : ""} · {active.count} file{active.count === 1 ? "" : "s"} · {formatBytes(active.sizeBytes)}
+                  {active.kind === "TV" ? "TV series" : "Movie"}
+                  {active.year ? ` · ${active.year}` : ""}
+                  {isAdmin ? ` · ${active.count} file${active.count === 1 ? "" : "s"} · ${formatBytes(active.sizeBytes)}` : ""}
                 </p>
               </div>
               <button onClick={() => setActive(null)} className="flex-none text-faint hover:text-ink">
@@ -282,6 +295,7 @@ export default function LibraryPage() {
                   mode="library"
                   initialSeason={active.items.reduce((m, i) => Math.max(m, i.season ?? 0), 0) || undefined}
                   onOpen={open}
+                  allowOpen={isAdmin}
                   onDownloadEpisode={(season, episode) =>
                     jsonFetch("/api/download/tmdb", {
                       method: "POST",
@@ -309,7 +323,7 @@ export default function LibraryPage() {
                   }
                 />
               </div>
-            ) : (
+            ) : isAdmin ? (
               <div className="divide-y divide-[color:var(--color-border)]">
                 {active.items
                   .slice()
@@ -329,10 +343,16 @@ export default function LibraryPage() {
                     </div>
                   ))}
               </div>
+            ) : (
+              <p className="p-5 text-center text-sm text-faint">
+                It&apos;s in your library — press <span className="text-ink">Play on Jellyfin</span> above to watch.
+              </p>
             )}
-            <p className="flex items-center gap-1.5 border-t border-border p-3 text-[11px] text-faint">
-              <HardDrive size={12} /> Tip: for smooth TV playback use the Jellyfin app — this opens the raw file.
-            </p>
+            {isAdmin && (
+              <p className="flex items-center gap-1.5 border-t border-border p-3 text-[11px] text-faint">
+                <HardDrive size={12} /> Admin: “Open” streams the raw file. Members watch on Jellyfin.
+              </p>
+            )}
           </div>
         </div>
       )}

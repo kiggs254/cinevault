@@ -45,6 +45,7 @@ export function EpisodeBrowser({
   onDownloadEpisode,
   onDownloadSeason,
   onOpen,
+  allowOpen = true,
 }: {
   tmdbId: number;
   seasons?: SeasonInfo[];
@@ -53,6 +54,8 @@ export function EpisodeBrowser({
   onDownloadEpisode?: (season: number, episode: number) => Promise<void> | void;
   onDownloadSeason?: (season: number) => Promise<void> | void;
   onOpen?: (s3Key: string) => void;
+  /** Show the raw-file "Open" button (admin only). Members watch via Jellyfin. */
+  allowOpen?: boolean;
 }) {
   const [seasonList, setSeasonList] = useState<SeasonInfo[]>(seasons ?? []);
   const valid = useMemo(
@@ -189,7 +192,7 @@ export function EpisodeBrowser({
         <div className="space-y-2">
           {eps.map((e) => {
             const completed = e.download?.status === "COMPLETED";
-            const playable = mode === "library" && completed && !!e.download?.s3Key;
+            const playable = allowOpen && mode === "library" && completed && !!e.download?.s3Key;
             return (
               <div
                 key={e.episodeNumber}

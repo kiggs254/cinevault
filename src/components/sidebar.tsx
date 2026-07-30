@@ -13,8 +13,6 @@ import {
   LogOut,
   Clapperboard,
   Search as SearchIcon,
-  Magnet,
-  HardDrive,
   Users,
   Send,
   BookOpen,
@@ -50,11 +48,11 @@ function bottomFor(role?: string) {
   return [
     { href: "/", label: "Home", icon: Home },
     { href: "/discover", label: "Discover", icon: Compass },
+    { href: "/library", label: "My Library", icon: Library },
+    { href: "/chat", label: "Assistant", icon: Sparkles },
     role === "admin"
       ? { href: "/downloads", label: "Downloads", icon: Download }
       : { href: "/guide", label: "Guide", icon: BookOpen },
-    { href: "/library", label: "Library", icon: Library },
-    { href: "/chat", label: "Assistant", icon: Sparkles },
   ];
 }
 
@@ -100,30 +98,6 @@ function useLogout() {
 function useActiveCount() {
   const { downloads } = useDownloadsCtx();
   return downloads.filter((d) => ACTIVE_STATUSES.includes(d.status)).length;
-}
-
-interface MaskedConfig {
-  settings: Record<string, unknown>;
-  secretsSet: Record<string, boolean>;
-}
-
-function useSystems(enabled: boolean) {
-  const [cfg, setCfg] = useState<MaskedConfig | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    jsonFetch<MaskedConfig>("/api/settings")
-      .then(setCfg)
-      .catch(() => setCfg(null));
-  }, [enabled]);
-  const s = cfg?.settings ?? {};
-  const sec = cfg?.secretsSet ?? {};
-  const systems: { label: string; ok: boolean; icon: LucideIcon }[] = [
-    { label: "AI", ok: !!(sec.moonshotApiKey || sec.mimoApiKey), icon: Sparkles },
-    { label: "Torrent", ok: !!s.qbitUrl, icon: Magnet },
-    { label: "Indexer", ok: !!(s.prowlarrUrl && sec.prowlarrApiKey), icon: SearchIcon },
-    { label: "Storage", ok: !!(s.s3Endpoint && s.s3Bucket && sec.s3SecretAccessKey), icon: HardDrive },
-  ];
-  return systems;
 }
 
 function Wordmark({ compact }: { compact?: boolean }) {
@@ -203,8 +177,6 @@ export function Sidebar() {
   const pathname = usePathname();
   const me = useMe();
   const isAdminUser = me?.role === "admin";
-  const systems = useSystems(!!isAdminUser);
-  const okCount = systems.filter((s) => s.ok).length;
   const activeCount = useActiveCount();
   const logout = useLogout();
 
@@ -234,57 +206,6 @@ export function Sidebar() {
               </button>
             )}
           </div>
-        )}
-        {isAdminUser && (
-        <div className="card p-3">
-          <div className="mb-2.5 flex items-center justify-between">
-            <p className="label">Systems</p>
-            <span
-              className="mono text-[10px] font-semibold"
-              style={{ color: okCount === systems.length ? "var(--color-success)" : "var(--color-muted)" }}
-            >
-              {okCount}/{systems.length}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {systems.map((sys) => {
-              const Icon = sys.icon;
-              return (
-                <div
-                  key={sys.label}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-surface-2/40 px-2 py-1.5"
-                  title={sys.ok ? `${sys.label} connected` : `${sys.label} not configured`}
-                >
-                  <span
-                    className="flex h-6 w-6 flex-none items-center justify-center rounded-md"
-                    style={{
-                      background: sys.ok
-                        ? "color-mix(in srgb, var(--color-success) 16%, transparent)"
-                        : "var(--color-surface)",
-                      color: sys.ok ? "var(--color-success)" : "var(--color-faint)",
-                    }}
-                  >
-                    <Icon size={12} />
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate text-[11px]"
-                    style={{ color: sys.ok ? "var(--color-ink)" : "var(--color-muted)" }}
-                  >
-                    {sys.label}
-                  </span>
-                  {sys.ok ? (
-                    <span
-                      className="dot dot-live flex-none"
-                      style={{ background: "var(--color-success)", color: "var(--color-success)" }}
-                    />
-                  ) : (
-                    <span className="dot flex-none" style={{ background: "var(--color-faint)" }} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
         )}
         <div className="flex items-center gap-2">
           <button onClick={logout} className="btn btn-ghost flex-1 text-muted">
