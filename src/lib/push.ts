@@ -7,6 +7,7 @@ export interface PushPayload {
   body: string;
   url?: string;
   tag?: string;
+  icon?: string; // large icon (media poster); SW falls back to the app icon
 }
 
 /** VAPID keys, generated + persisted (encrypted) to the DB on first use. */

@@ -21,8 +21,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Cinevault";
   const options = {
     body: data.body || "",
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
+    icon: data.icon || "/icon-192.png", // media poster, else the app icon
+    badge: "/badge.png", // monochrome Cinevault mark (Android tints the small icon)
     tag: data.tag || undefined,
     renotify: Boolean(data.tag),
     data: { url: data.url || "/" },

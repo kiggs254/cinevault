@@ -192,7 +192,12 @@ export async function notifyUser(
   opts?: { photo?: string | null; buttons?: NotifyButton[] },
 ): Promise<void> {
   // Native web push (independent of Telegram; no-op if they haven't enabled it).
-  await sendPush(userId, { title: APP_NAME, body: text, url: opts?.buttons?.[0]?.path });
+  await sendPush(userId, {
+    title: APP_NAME,
+    body: text,
+    url: opts?.buttons?.[0]?.path,
+    icon: opts?.photo ?? undefined,
+  });
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken) return;
@@ -239,7 +244,7 @@ export async function notifyActivity(
 
   // Native push to admins — not gated on Telegram. Skip the actor (already pushed above).
   await pushAdmins(
-    { title: APP_NAME, body: `${who}${text}`, url: opts?.buttons?.[0]?.path },
+    { title: APP_NAME, body: `${who}${text}`, url: opts?.buttons?.[0]?.path, icon: opts?.photo ?? undefined },
     userId ?? undefined,
   );
 
