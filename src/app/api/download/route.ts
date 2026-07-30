@@ -5,7 +5,7 @@ import {
   startFromQuery,
   type CreateDownloadInput,
 } from "@/lib/service/downloads";
-import { getSessionUser } from "@/lib/session";
+import { getSessionUser, isAdmin } from "@/lib/session";
 import type { MediaKind } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const downloads = await listDownloads({ userId: user.id });
+  // Admin sees everyone's downloads; members see only their own.
+  const downloads = await listDownloads({ userId: isAdmin(user) ? undefined : user.id });
   return NextResponse.json({ downloads }, { headers: { "Cache-Control": "no-store" } });
 }
 

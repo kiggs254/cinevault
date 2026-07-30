@@ -84,11 +84,15 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
   const [following, setFollowing] = useState(false);
   const [followId, setFollowId] = useState<string | null>(null);
   const [subscribed, setSubscribed] = useState(false);
+  const [added, setAdded] = useState(false); // sticky "✓ Added" state for the primary button
+  const [playing, setPlaying] = useState(false); // resolving the Jellyfin deep link
   const [trailer, setTrailer] = useState<TrailerSeed | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setAdded(false);
+    setMsg("");
     jsonFetch<{ details: Details }>(`/api/tmdb/details?type=${seed.mediaType}&id=${seed.tmdbId}`)
       .then((d) => {
         if (!alive) return;
@@ -117,6 +121,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
         method: "POST",
         body: JSON.stringify({ tmdbId: seed.tmdbId, mediaType: "movie", title: details?.title ?? seed.title, year: details?.year ?? seed.year }),
       });
+      setAdded(true);
       setMsg("Adding to your library — it'll be ready to watch shortly.");
     } catch (e) {
       setMsg((e as Error).message);
@@ -150,6 +155,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
 
   async function playOnJellyfin() {
     setMsg("");
+    setPlaying(true);
     try {
       const d = await jsonFetch<{ url?: string }>(
         `/api/jellyfin/resolve?tmdbId=${seed.tmdbId}&type=${seed.mediaType}`,
@@ -158,6 +164,8 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
       else setMsg("Not on Jellyfin yet — give the library a minute to scan.");
     } catch {
       setMsg("Not on Jellyfin yet — give the library a minute to scan.");
+    } finally {
+      setPlaying(false);
     }
   }
 
@@ -197,6 +205,7 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
           seasons,
         }),
       });
+      setAdded(true);
       setMsg(
         `Adding ${seasons.length} season${seasons.length === 1 ? "" : "s"} to your library — episodes appear as they're ready.`,
       );
@@ -364,8 +373,9 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
 
               {seed.mediaType === "movie" ? (
                 details?.ownedMovie ? (
-                  <button className="btn btn-accent w-full" onClick={playOnJellyfin}>
-                    <Play size={15} /> Play on Jellyfin
+                  <button className="btn btn-accent w-full" onClick={playOnJellyfin} disabled={playing}>
+                    {playing ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+                    {playing ? "Opening…" : "Play on Jellyfin"}
                   </button>
                 ) : isUpcomingMovie ? (
                   <button
@@ -383,30 +393,51 @@ export function TitleModal({ seed, onClose }: { seed: TitleSeed; onClose: () => 
                     {subscribed ? "Subscribed — auto-download" : "Notify + auto-download when out"}
                   </button>
                 ) : (
-                  <button className="btn btn-accent w-full" onClick={downloadMovie} disabled={busy}>
-                    {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                    Add to my library
+                  <button
+                    className={`btn w-full ${added ? "btn-ghost" : "btn-accent"}`}
+                    onClick={downloadMovie}
+                    disabled={busy || added}
+                  >
+                    {busy ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : added ? (
+                      <Check size={15} style={{ color: "var(--color-success)" }} />
+                    ) : (
+                      <Download size={15} />
+                    )}
+                    {busy ? "Adding…" : added ? "Added — ready to watch soon" : "Add to my library"}
                   </button>
                 )
               ) : (
                 <>
                   {anySeasonOwned && (
-                    <button className="btn btn-accent mb-3 w-full" onClick={playOnJellyfin}>
-                      <Play size={15} /> Play on Jellyfin
+                    <button className="btn btn-accent mb-3 w-full" onClick={playOnJellyfin} disabled={playing}>
+                      {playing ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+                      {playing ? "Opening…" : "Play on Jellyfin"}
                     </button>
                   )}
                   {releasedSeasons.length > 0 && (
                     <button
-                      className={`btn mb-3 w-full ${anySeasonOwned ? "btn-ghost" : "btn-accent"}`}
+                      className={`btn mb-3 w-full ${anySeasonOwned || added ? "btn-ghost" : "btn-accent"}`}
                       onClick={downloadAllSeasons}
-                      disabled={busy || allSeasonsOwned}
+                      disabled={busy || allSeasonsOwned || added}
                     >
-                      {busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                      {allSeasonsOwned
-                        ? "All seasons in your library"
-                        : releasedSeasons.length > 1
-                          ? `Add all ${releasedSeasons.length} seasons`
-                          : "Add season to my library"}
+                      {busy ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : added ? (
+                        <Check size={15} style={{ color: "var(--color-success)" }} />
+                      ) : (
+                        <Download size={15} />
+                      )}
+                      {busy
+                        ? "Adding…"
+                        : added
+                          ? "Added — episodes appear as they're ready"
+                          : allSeasonsOwned
+                            ? "All seasons in your library"
+                            : releasedSeasons.length > 1
+                              ? `Add all ${releasedSeasons.length} seasons`
+                              : "Add season to my library"}
                     </button>
                   )}
                   <div className="mb-3 flex items-center justify-between">

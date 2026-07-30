@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { DownloadStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getSessionUser } from "@/lib/session";
+import { getSessionUser, isAdmin } from "@/lib/session";
 import { getConfig } from "@/lib/config";
 import { getMovieDetails, getTvDetails } from "@/lib/metadata/tmdb";
 
@@ -58,7 +58,8 @@ export async function GET() {
   // can show an "adding" indicator while a title downloads.
   const rows = await prisma.download.findMany({
     where: {
-      userId: user.id,
+      // Admin's library shows everything downloaded by anyone; members see their own.
+      ...(isAdmin(user) ? {} : { userId: user.id }),
       OR: [{ s3Key: { not: null }, s3DeletedAt: null }, { status: { in: ACTIVE } }],
     },
     orderBy: { createdAt: "desc" },
