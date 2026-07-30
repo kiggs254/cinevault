@@ -1,8 +1,5 @@
 import "dotenv/config";
 import path from "node:path";
-import { createWriteStream } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
@@ -28,7 +25,7 @@ import {
   retryFailed,
   recordDownloadFailure,
 } from "../lib/service/downloads";
-import { makeS3, uploadContent } from "../lib/storage/s3";
+import { makeS3, uploadContent, uploadStream } from "../lib/storage/s3";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
@@ -386,30 +383,25 @@ async function handleStall(
   return info;
 }
 
-/** Stream a URL to a local file (no full-file buffering); reports bytes as they arrive. */
-async function downloadToFile(
-  url: string,
-  dest: string,
-  onBytes?: (n: number) => void,
-): Promise<void> {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`TorBox download failed: ${res.status}`);
-  const src = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
-  if (onBytes) src.on("data", (c: Buffer) => onBytes(c.length));
-  await pipeline(src, createWriteStream(dest));
-}
-
 /**
- * Try to fetch a release via TorBox (debrid): add the magnet, wait until TorBox
- * has the files (instant when cached, no seeders/stalls), then pull them into a
- * local dir that the normal organize→S3 pipeline uploads from. Returns the dir,
- * or null to fall back to qBittorrent (rate-limited, errored, or too slow).
+ * Fetch a release via TorBox (debrid) and stream its files DIRECTLY into S3 —
+ * the bytes never touch the local disk, so a large or stuck download can't fill
+ * the host (that took the whole box down once). Add the magnet, wait until TorBox
+ * has the files on its cloud, then pipe each file's HTTP body into a multipart S3
+ * upload at its final key. Returns the uploaded keys, or null to fall back to
+ * qBittorrent (rate-limited, errored, or too slow).
  */
-async function downloadViaTorbox(
+async function streamTorboxToS3(
   id: string,
   dl: { magnet: string; title: string; season: number | null; episode: number | null },
   cfg: ResolvedConfig,
-): Promise<string | null> {
+  dest: {
+    s3: ReturnType<typeof makeS3>;
+    bucket: string;
+    keyPrefix: string;
+    onProgress: (uploaded: number, total: number) => void;
+  },
+): Promise<{ keys: string[]; bytes: number; primaryKey: string } | null> {
   const tb = new TorboxClient(cfg.torbox);
   let added: { torrentId: number; hash?: string } | null;
   if (dl.magnet.startsWith("magnet:")) {
@@ -446,6 +438,7 @@ async function downloadViaTorbox(
     title: dl.title,
   });
 
+  // Phase 1 — wait until TorBox has the files (its cloud does the torrenting).
   let info: TorboxTorrent | null = null;
   const deadline = Date.now() + TORBOX_WAIT_MS;
   while (Date.now() < deadline) {
@@ -468,37 +461,56 @@ async function downloadViaTorbox(
     return null; // fall back to qBittorrent
   }
 
-  const dir = path.join(cfg.prefs.downloadDir, `torbox-${id}`);
-  await mkdir(dir, { recursive: true });
-  // Report download progress as the files stream in (TorBox pull can be many GB).
-  const totalBytes = info.files.reduce((a, f) => a + (f.size || 0), 0);
-  let done = 0;
-  const emit = throttle(() => {
-    const pct = totalBytes ? Math.min(99, Math.round((done / totalBytes) * 100)) : 0;
-    void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
-    void publishProgress({ type: "progress", downloadId: id, status: "DOWNLOADING", progress: pct });
-  }, 1000);
-  let got = 0;
-  for (const f of info.files) {
+  // Phase 2 — stream each file's HTTP body straight into S3 (no local disk).
+  await setStatus(id, "UPLOADING", 0);
+  void logActivity(`Uploading ${dl.title}${epTag(dl.season, dl.episode)} to S3…`, {
+    kind: "upload",
+    title: dl.title,
+  });
+  const junk = /(\.torrent|\.parts|\.aria2|thumbs\.db|\.ds_store)$/i;
+  const prefix = dest.keyPrefix.replace(/^\/+|\/+$/g, "");
+  const wanted = info.files.filter((f) => !junk.test(f.name));
+  const total = wanted.reduce((a, f) => a + (f.size || 0), 0);
+  let doneBytes = 0;
+  const keys: string[] = [];
+  let primaryKey = "";
+  let primarySize = -1;
+  for (const f of wanted) {
     const link = await tb.requestDownloadLink(added.torrentId, f.id);
     if (!link) continue;
     const name = (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_");
+    const key = `${prefix}/${name}`;
+    const res = await fetch(link);
+    if (!res.ok || !res.body) {
+      console.error(`[torbox] file fetch failed for ${name}: ${res.status}`);
+      continue;
+    }
+    const body = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+    let fileLoaded = 0;
     try {
-      await downloadToFile(link, path.join(dir, name), (n) => {
-        done += n;
-        emit();
+      await uploadStream({
+        s3: dest.s3,
+        bucket: dest.bucket,
+        key,
+        body,
+        onProgress: (loaded) => {
+          doneBytes += loaded - fileLoaded;
+          fileLoaded = loaded;
+          dest.onProgress(doneBytes, total);
+        },
       });
-      got++;
+      keys.push(key);
+      if ((f.size || 0) > primarySize) {
+        primarySize = f.size || 0;
+        primaryKey = key;
+      }
     } catch (e) {
-      console.error("[torbox] file download failed:", (e as Error).message);
+      console.error(`[torbox] stream→S3 failed for ${name}:`, (e as Error).message);
     }
   }
-  await tb.remove(added.torrentId); // we have the files — free the TorBox slot
-  if (!got) {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-    return null;
-  }
-  return dir;
+  await tb.remove(added.torrentId); // files are in S3 now — free the TorBox slot
+  if (!keys.length) return null;
+  return { keys, bytes: total, primaryKey };
 }
 
 async function processDownload(id: string): Promise<void> {
@@ -520,32 +532,43 @@ async function processDownload(id: string): Promise<void> {
   // qBittorrent client — the fallback provider, and used for sibling cleanup.
   const qb = cfg.qbit.url ? new QbClient(cfg.qbit) : null;
 
-  // Where the finished files land locally + how to clean up after upload. The
-  // provider (TorBox or qBittorrent) sets both; the organize→S3 pipeline below
-  // is shared.
-  let contentPath: string;
+  // Resolve the target S3 layout up front (metadata-only) so the TorBox path can
+  // stream files straight to their final keys with no local-disk hop.
+  const organized = await organize({
+    releaseName: dl.releaseName,
+    kind: dl.kind as MediaKind,
+    title: dl.title,
+    year: dl.year,
+    season: dl.season,
+    episode: dl.episode,
+  });
+  const keyPrefix = [cfg.s3.basePrefix, organized.s3Prefix].filter(Boolean).join("/");
+  const s3 = makeS3(cfg.s3);
+  const emitUpload = throttle((uploadedBytes: number, total: number) => {
+    const pct = total > 0 ? (uploadedBytes / total) * 100 : 0;
+    void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
+    void publishProgress({ type: "progress", downloadId: id, status: "UPLOADING", progress: pct });
+  }, 1000);
+
+  let uploaded: { keys: string[]; bytes: number; primaryKey: string } | null = null;
   let cleanup: () => Promise<void> = async () => {};
 
-  // Provider: TorBox first (instant when cached, no seeders/stalls/re-source),
-  // then qBittorrent. TorBox takes magnets only; .torrent URLs go straight to qBit.
-  const tbDir =
-    cfg.torbox.apiKey && /^(magnet:|https?:)/i.test(dl.magnet)
-      ? await downloadViaTorbox(
-          id,
-          { magnet: dl.magnet, title: dl.title, season: dl.season, episode: dl.episode },
-          cfg,
-        ).catch((e) => {
-          console.error("[torbox]", (e as Error).message);
-          return null;
-        })
-      : null;
+  // Provider: TorBox first — stream its HTTP files DIRECTLY into S3 (no local
+  // disk, so a big or stuck download can never fill the host). Then qBittorrent.
+  if (cfg.torbox.apiKey && /^(magnet:|https?:)/i.test(dl.magnet)) {
+    uploaded = await streamTorboxToS3(
+      id,
+      { magnet: dl.magnet, title: dl.title, season: dl.season, episode: dl.episode },
+      cfg,
+      { s3, bucket: cfg.s3.bucket, keyPrefix, onProgress: emitUpload },
+    ).catch((e) => {
+      console.error("[torbox]", (e as Error).message);
+      return null;
+    });
+  }
 
-  if (tbDir) {
-    contentPath = tbDir;
-    cleanup = async () => {
-      if (cfg.prefs.deleteAfterUpload) await rm(tbDir, { recursive: true, force: true }).catch(() => {});
-    };
-  } else {
+  // Fallback: qBittorrent → local staging dir → uploadContent → delete local.
+  if (!uploaded) {
     if (!qb) throw new Error("qBittorrent is not configured (see Settings)");
     await qb.ensureCategory(CATEGORY);
 
@@ -579,48 +602,34 @@ async function processDownload(id: string): Promise<void> {
 
     // Download, auto-switching source if a torrent stalls for STALL_MS.
     info = await downloadWithReSource(qb, id, info, cfg);
-    contentPath = info.content_path || path.join(info.save_path, info.name);
+    const contentPath = info.content_path || path.join(info.save_path, info.name);
     const hash = info.hash;
     cleanup = async () => {
       if (cfg.prefs.deleteAfterUpload) await qb.delete([hash], true).catch(() => {});
     };
+
+    await setStatus(id, "UPLOADING", 0);
+    void logActivity(`Uploading ${dl.title}${epTag(dl.season, dl.episode)} to S3…`, {
+      kind: "upload",
+      title: dl.title,
+    });
+    uploaded = await uploadContent({
+      s3,
+      bucket: cfg.s3.bucket,
+      contentPath,
+      keyPrefix,
+      onProgress: emitUpload,
+    });
   }
 
-  // Organize + enrich, then upload.
-  await setStatus(id, "UPLOADING", 0);
-  void logActivity(`Uploading ${dl.title}${epTag(dl.season, dl.episode)} to S3…`, {
-    kind: "upload",
-    title: dl.title,
-  });
-  const organized = await organize({
-    releaseName: dl.releaseName,
-    kind: dl.kind as MediaKind,
-    title: dl.title,
-    year: dl.year,
-    season: dl.season,
-    episode: dl.episode,
-  });
+  if (!uploaded || !uploaded.keys.length) throw new Error("Download produced no files");
   const meta = await enrich(
     cfg.tmdb.apiKey,
     organized.kind,
     organized.cleanTitle,
     organized.year ?? dl.year,
   );
-
-  const s3 = makeS3(cfg.s3);
-  const emitUpload = throttle((uploaded: number, total: number) => {
-    const pct = total > 0 ? (uploaded / total) * 100 : 0;
-    void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
-    void publishProgress({ type: "progress", downloadId: id, status: "UPLOADING", progress: pct });
-  }, 1000);
-
-  const { primaryKey, bytes, keys } = await uploadContent({
-    s3,
-    bucket: cfg.s3.bucket,
-    contentPath,
-    keyPrefix: [cfg.s3.basePrefix, organized.s3Prefix].filter(Boolean).join("/"),
-    onProgress: emitUpload,
-  });
+  const { primaryKey, bytes, keys } = uploaded;
 
   await prisma.download.update({
     where: { id },

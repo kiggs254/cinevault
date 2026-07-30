@@ -9,6 +9,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import type { ResolvedConfig } from "../config";
 
 export type S3Config = ResolvedConfig["s3"];
@@ -129,6 +130,36 @@ export async function uploadContent(opts: {
     }
   }
   return { keys, bytes: total, primaryKey };
+}
+
+/**
+ * Stream an arbitrary readable (e.g. a remote HTTP body from TorBox) straight to
+ * one S3 key via multipart upload — the bytes never touch local disk, only a
+ * bounded in-flight buffer (partSize × queueSize). Reports cumulative bytes.
+ */
+export async function uploadStream(opts: {
+  s3: S3Client;
+  bucket: string;
+  key: string;
+  body: Readable;
+  contentType?: string;
+  onProgress?: (uploadedBytes: number) => void;
+}): Promise<void> {
+  const upload = new Upload({
+    client: opts.s3,
+    params: {
+      Bucket: opts.bucket,
+      Key: opts.key,
+      Body: opts.body,
+      ContentType: opts.contentType ?? guessType(opts.key),
+    },
+    queueSize: 4,
+    partSize: 16 * 1024 * 1024,
+  });
+  if (opts.onProgress) {
+    upload.on("httpUploadProgress", (p) => opts.onProgress!(p.loaded ?? 0));
+  }
+  await upload.done();
 }
 
 export interface S3Entry {
