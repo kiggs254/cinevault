@@ -104,9 +104,24 @@ model User {
   wanted          WantedMovie[]
   recommendations Recommendation[]
   chats           ChatSession[]
+  pushSubs        PushSubscription[]
 
   @@index([status])
   @@index([invitedById])
+}
+
+/// A browser Web-Push subscription (one per device/browser a member enables).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 /// A single referral/invite code. Registration is invite-only; each code links

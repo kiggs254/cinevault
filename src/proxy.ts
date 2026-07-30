@@ -45,7 +45,8 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
 export const config = {
   matcher: [
-    // Protect everything except Next internals and static image assets.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Protect everything except Next internals, static image assets, and the
+    // public PWA files (manifest + service worker are fetched without cookies).
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

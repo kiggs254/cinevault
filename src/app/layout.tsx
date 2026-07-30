@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Bebas_Neue, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import PwaRegister from "@/components/pwa-register";
 
 const bebas = Bebas_Neue({ weight: "400", subsets: ["latin"], variable: "--font-bebas" });
 const hanken = Hanken_Grotesk({
@@ -17,6 +18,9 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Cinevault — AI film & TV vault",
   description: "A self-hosted, AI-curated film & TV vault with S3 archiving.",
+  applicationName: "Cinevault",
+  appleWebApp: { capable: true, title: "Cinevault", statusBarStyle: "black-translucent" },
+  icons: { apple: "/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {
@@ -42,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+        <PwaRegister />
         <div className="glow" aria-hidden="true" />
         <div className="grain" aria-hidden="true" />
         <div className="relative z-[2]">{children}</div>

@@ -22,6 +22,7 @@ import { jsonFetch } from "@/lib/client";
 import { useDownloadsCtx } from "@/components/downloads-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SearchOverlay } from "@/components/search-overlay";
+import { NotifyToggleSidebar, NotifyToggleIcon } from "@/components/notify-toggle";
 
 const BASE_NAV = [
   { href: "/", label: "Home", icon: Home },
@@ -198,6 +199,7 @@ export function Sidebar() {
             )}
           </div>
         )}
+        <NotifyToggleSidebar />
         <div className="flex items-center gap-2">
           <button onClick={logout} className="btn btn-ghost flex-1 text-muted">
             <LogOut size={16} /> Sign out
@@ -224,6 +226,7 @@ export function MobileTopBar() {
             <SearchIcon size={19} />
           </button>
           <ThemeToggle size={19} className="rounded-lg p-2 text-muted" />
+          <NotifyToggleIcon />
           {me && !me.telegramLinked && (
             <button onClick={connectTelegram} aria-label="Connect Telegram" className="rounded-lg p-2 text-muted">
               <Send size={19} />

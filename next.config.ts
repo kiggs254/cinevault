@@ -11,6 +11,9 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
   "font-src 'self' data:",
+  // Service worker (PWA / web push) served from our own origin.
+  "worker-src 'self'",
+  "manifest-src 'self'",
   // YouTube trailer embeds (privacy-enhanced domain).
   "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
   "frame-ancestors 'none'",
@@ -34,7 +37,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   // Keep native/server-only deps external instead of bundling them.
-  serverExternalPackages: ["bullmq", "ioredis"],
+  serverExternalPackages: ["bullmq", "ioredis", "web-push"],
   images: {
     dangerouslyAllowSVG: false,
     remotePatterns: [{ protocol: "https", hostname: "image.tmdb.org" }],

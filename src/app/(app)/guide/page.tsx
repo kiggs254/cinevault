@@ -19,6 +19,7 @@ import {
   Plus,
   AlertTriangle,
 } from "lucide-react";
+import { NotifyToggleFull } from "@/components/notify-toggle";
 
 /* ------------------------------- shared data ------------------------------ */
 const APPS: { label: string; href: string; icon: typeof Smartphone }[] = [
@@ -259,6 +260,10 @@ export default function GuidePage() {
               Use your Cinevault username{me?.username ? <span className="mono text-ink"> ({me.username})</span> : ""}{" "}
               and the same password. That&apos;s it — your library is waiting.
             </p>
+          </div>
+          <div>
+            <p className="label mb-2">4 · Turn on notifications</p>
+            <NotifyToggleFull />
           </div>
         </div>
       )}

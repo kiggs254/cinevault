@@ -1,7 +1,24 @@
 import { getConfig } from "../config";
 import { prisma } from "../db";
+import { sendPush, type PushPayload } from "../push";
 
 const API = "https://api.telegram.org";
+const APP_NAME = "Cinevault";
+
+/** Native web-push to every active admin (optionally skipping one already-pushed actor). */
+async function pushAdmins(payload: PushPayload, exceptUserId?: string): Promise<void> {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: "admin", status: "active" },
+      select: { id: true },
+    });
+    await Promise.all(
+      admins.filter((a) => a.id !== exceptUserId).map((a) => sendPush(a.id, payload)),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
 
 export interface TgPhotoSize {
   file_id: string;
@@ -174,6 +191,8 @@ export async function notifyUser(
   text: string,
   opts?: { photo?: string | null; buttons?: NotifyButton[] },
 ): Promise<void> {
+  // Native web push (independent of Telegram; no-op if they haven't enabled it).
+  await sendPush(userId, { title: APP_NAME, body: text, url: opts?.buttons?.[0]?.path });
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken) return;
@@ -205,19 +224,29 @@ export async function notifyActivity(
   opts?: { photo?: string | null; buttons?: NotifyButton[] },
 ): Promise<void> {
   if (userId) await notifyUser(userId, text, opts);
+
+  // Resolve the actor once (for the "who" prefix + owner-chat dedup).
+  let who = "";
+  let memberChat = "";
+  if (userId) {
+    const m = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { username: true, telegramChatId: true },
+    });
+    memberChat = m?.telegramChatId ?? "";
+    who = m?.username ? `👤 ${m.username} · ` : "";
+  }
+
+  // Native push to admins — not gated on Telegram. Skip the actor (already pushed above).
+  await pushAdmins(
+    { title: APP_NAME, body: `${who}${text}`, url: opts?.buttons?.[0]?.path },
+    userId ?? undefined,
+  );
+
+  // Telegram activity mirror to the owner chat.
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;
-    let who = "";
-    let memberChat = "";
-    if (userId) {
-      const m = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { username: true, telegramChatId: true },
-      });
-      memberChat = m?.telegramChatId ?? "";
-      who = m?.username ? `👤 ${m.username} · ` : "";
-    }
     if (memberChat && String(memberChat) === String(cfg.telegram.chatId)) return; // already delivered via notifyUser
     const base = (cfg.appUrl ?? "").replace(/\/$/, "");
     const buttons: UrlButton[] = (opts?.buttons ?? []).map((b) => ({ text: b.text, url: `${base}${b.path}` }));
@@ -237,6 +266,12 @@ export async function notifyOwnerNewRegistration(user: {
   username: string;
   invitedBy?: string | null;
 }): Promise<void> {
+  const referralBody = user.invitedBy ? ` (referred by ${user.invitedBy})` : "";
+  await pushAdmins({
+    title: `${APP_NAME} · new access request`,
+    body: `“${user.username}” wants to join${referralBody}. Tap to approve.`,
+    url: "/users",
+  });
   try {
     const cfg = await getConfig();
     if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;

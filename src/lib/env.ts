@@ -70,6 +70,11 @@ const schema = z.object({
   TELEGRAM_CHAT_ID: z.string().optional(),
   TELEGRAM_ALLOWED_IDS: z.string().optional(),
   TORBOX_API_KEY: z.string().optional(),
+
+  // Web Push (VAPID). Optional — self-generated + stored in the DB on first use.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

@@ -43,6 +43,7 @@ export interface ResolvedConfig {
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
   registration: { enabled: boolean; code?: string }; // public /register gate
+  webPush: { publicKey?: string; privateKey?: string; subject: string }; // VAPID (self-generated)
   tasteProfile: TasteProfile | null;
 }
 
@@ -57,6 +58,7 @@ const SECRET_KEYS = [
   "jellyfinApiKey",
   "telegramBotToken",
   "torboxApiKey",
+  "vapidPrivateKey",
 ] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -179,6 +181,11 @@ export async function getConfig(): Promise<ResolvedConfig> {
       enabled: settings.registrationEnabled !== false, // default on
       code: str(settings.registrationCode),
     },
+    webPush: {
+      publicKey: str(settings.vapidPublicKey) ?? env.VAPID_PUBLIC_KEY,
+      privateKey: dec("vapidPrivateKey") ?? env.VAPID_PRIVATE_KEY,
+      subject: str(settings.vapidSubject) ?? env.VAPID_SUBJECT ?? "mailto:notify@cinevault.app",
+    },
     tasteProfile: (settings.tasteProfile as TasteProfile | undefined) ?? null,
   };
 }
@@ -199,6 +206,7 @@ export async function getMaskedConfig() {
     jellyfinApiKey: !!env.JELLYFIN_API_KEY,
     telegramBotToken: !!env.TELEGRAM_BOT_TOKEN,
     torboxApiKey: !!env.TORBOX_API_KEY,
+    vapidPrivateKey: !!env.VAPID_PRIVATE_KEY,
   };
   const secretsSet = Object.fromEntries(
     SECRET_KEYS.map((k) => [k, !!secrets[k] || envSecretPresent[k]]),
