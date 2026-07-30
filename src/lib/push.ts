@@ -61,10 +61,10 @@ export async function hasPush(userId: string): Promise<boolean> {
 export async function sendPush(userId: string | null | undefined, payload: PushPayload): Promise<void> {
   if (!userId) return;
   try {
-    const vapid = await getVapid();
-    if (!vapid) return;
     const subs = await prisma.pushSubscription.findMany({ where: { userId } });
     if (subs.length === 0) return;
+    const vapid = await getVapid();
+    if (!vapid) return;
     const body = JSON.stringify(payload);
     const options = {
       vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey },
