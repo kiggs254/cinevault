@@ -158,7 +158,7 @@ export default function GuidePage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl px-5 py-6 sm:py-8 md:px-10">
       <div className="mb-5 flex items-center gap-2">
         <BookOpen size={22} className="text-accent" />
         <h1 className="text-2xl font-bold text-ink" style={{ fontFamily: "var(--font-display)" }}>

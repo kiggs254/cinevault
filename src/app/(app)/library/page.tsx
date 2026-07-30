@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Loader2, Search as SearchIcon } from "lucide-react";
+import { overallProgress } from "@/lib/progress";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
@@ -38,12 +39,25 @@ function epLabel(i: Item): string {
   return i.releaseName;
 }
 
-/** Highest progress among a group's still-adding files, for the poster badge. */
-function addingPct(t: TitleGroup): number | null {
+/** A group's overall "adding" progress (0-100) — the furthest-along active file,
+ * on a single forward-only scale across search/download/upload. */
+function addingPct(t: TitleGroup): number {
   const act = t.items.filter((i) => ACTIVE_ST.includes(i.status));
-  if (!act.length) return null;
-  const p = Math.max(...act.map((i) => i.progress || 0));
-  return p > 0 ? Math.round(p) : null;
+  if (!act.length) return 0;
+  return Math.round(Math.max(...act.map((i) => overallProgress(i.status, i.progress || 0))));
+}
+
+/** Human phase for the poster overlay ("Finding a source" / "Adding 45%" / "Finishing up 92%"). */
+function addingLabel(t: TitleGroup): string {
+  const act = t.items.filter((i) => ACTIVE_ST.includes(i.status));
+  if (!act.length) return "Adding…";
+  const lead = act.reduce((a, b) =>
+    overallProgress(b.status, b.progress || 0) > overallProgress(a.status, a.progress || 0) ? b : a,
+  );
+  const pct = addingPct(t);
+  if (lead.status === "QUEUED" || lead.status === "SEARCHING") return "Finding a source…";
+  if (lead.status === "UPLOADING") return `Finishing up ${pct}%`;
+  return `Adding ${pct}%`;
 }
 
 export default function LibraryPage() {
@@ -208,13 +222,17 @@ export default function LibraryPage() {
                       <span className="absolute right-1 top-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t.count}</span>
                     )}
                     {t.downloading && (
-                      <span className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1 rounded-full bg-black/80 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                        <Loader2 size={10} className="animate-spin" />
-                        {(() => {
-                          const p = addingPct(t);
-                          return p != null ? `Adding ${p}%` : "Adding…";
-                        })()}
-                      </span>
+                      <div className="absolute inset-x-0 bottom-0">
+                        <div className="flex items-center justify-center gap-1 bg-black/80 px-1.5 py-1 text-[10px] font-medium text-accent">
+                          <Loader2 size={10} className="animate-spin" /> {addingLabel(t)}
+                        </div>
+                        <div className="h-1 w-full bg-black/70">
+                          <div
+                            className="h-full bg-accent transition-all duration-500"
+                            style={{ width: `${Math.max(4, addingPct(t))}%` }}
+                          />
+                        </div>
+                      </div>
                     )}
                   </div>
                   <p className="mt-1.5 truncate text-xs text-ink">{t.title}</p>
