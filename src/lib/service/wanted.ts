@@ -2,7 +2,7 @@ import { prisma } from "../db";
 import { getConfig } from "../config";
 import { getMovieDetails } from "../metadata/tmdb";
 import { grabMovie } from "./downloads";
-import { notify, notifyUser } from "../telegram/client";
+import { notifyActivity } from "../telegram/client";
 import type { WantedMovie } from "@prisma/client";
 
 /**
@@ -80,8 +80,7 @@ export async function scanWantedMovies(): Promise<{ scanned: number; grabbed: nu
         grabbed++;
         const text = `📥 “${w.title}” just became available — adding it to your library now.`;
         const opts = { photo: w.posterUrl, buttons: [{ text: "📚 Open your library", path: "/library" }] };
-        if (w.userId) await notifyUser(w.userId, text, opts);
-        else await notify(text, opts);
+        await notifyActivity(w.userId, text, opts);
       } else {
         await prisma.wantedMovie.update({
           where: { id: w.id },

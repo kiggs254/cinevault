@@ -318,13 +318,29 @@ export function MobileTopBar() {
             </button>
           )}
           {me?.role === "admin" && (
-            <Link
-              href="/settings"
-              aria-label="Settings"
-              className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
-            >
-              <Settings2 size={19} />
-            </Link>
+            <>
+              <Link
+                href="/invite"
+                aria-label="Invite"
+                className={`rounded-lg p-2 ${isActive("/invite", pathname) ? "text-accent" : "text-muted"}`}
+              >
+                <Ticket size={19} />
+              </Link>
+              <Link
+                href="/users"
+                aria-label="Members"
+                className={`rounded-lg p-2 ${isActive("/users", pathname) ? "text-accent" : "text-muted"}`}
+              >
+                <Users size={19} />
+              </Link>
+              <Link
+                href="/settings"
+                aria-label="Settings"
+                className={`rounded-lg p-2 ${isActive("/settings", pathname) ? "text-accent" : "text-muted"}`}
+              >
+                <Settings2 size={19} />
+              </Link>
+            </>
           )}
           <button onClick={logout} aria-label="Sign out" className="rounded-lg p-2 text-muted">
             <LogOut size={19} />

@@ -13,7 +13,7 @@ import {
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
 import { makeS3, deleteObject } from "../storage/s3";
-import { notify, notifyUser } from "../telegram/client";
+import { notifyActivity } from "../telegram/client";
 import type { Download } from "@prisma/client";
 import { enqueueDownload, enqueueEpisodeGrab } from "../queue";
 import {
@@ -308,6 +308,8 @@ export async function grabMovie(opts: {
   /** For subscriptions: only grab a real (non-cam, ≥720p) release — wait, don't grab a cam. */
   requireNonCam?: boolean;
   userId?: string | null;
+  /** Announce the request on Telegram (member + admin feed). Off for scans that notify themselves. */
+  announce?: boolean;
 }): Promise<DownloadDTO | null> {
   // Someone already has this movie? Give the requester a library entry pointing
   // at the same file instead of downloading it again.
@@ -336,7 +338,7 @@ export async function grabMovie(opts: {
     return null;
   }
   void logActivity(`Queued “${opts.title}” — ${chosen.seeders ?? 0} seeders`, { kind: "queue", title: opts.title });
-  return createDownload({
+  const dl = await createDownload({
     releaseName: chosen.title,
     source: chosen.magnetUrl ?? chosen.downloadUrl ?? "",
     infoHash: chosen.infoHash,
@@ -350,6 +352,19 @@ export async function grabMovie(opts: {
     userId: opts.userId ?? null,
     query: q,
   });
+  if (opts.announce) {
+    let photo: string | undefined;
+    try {
+      if (cfg.tmdb.apiKey) photo = (await cachedTitleMeta(cfg.tmdb.apiKey, "MOVIE", opts.tmdbId)).posterUrl ?? undefined;
+    } catch {
+      /* poster optional */
+    }
+    await notifyActivity(opts.userId, `🎬 Adding “${opts.title}”${opts.year ? ` (${opts.year})` : ""} to the library…`, {
+      photo,
+      buttons: [{ text: "📚 Open your library", path: "/library" }],
+    });
+  }
+  return dl;
 }
 
 /** Grab one specific episode by TMDB id (720p, smallest well-seeded, validated). */
@@ -597,8 +612,7 @@ export async function grabEpisode(o: {
     }
     const text = `📥 Adding to your library\n${show.title} — S${pad2(ep.seasonNumber)}E${pad2(ep.episodeNumber)}${ep.name ? ` · ${ep.name}` : ""}`;
     const buttons = [{ text: "📚 Open your library", path: "/library" }];
-    if (o.userId) await notifyUser(o.userId, text, { photo, buttons });
-    else await notify(text, { photo, buttons });
+    await notifyActivity(o.userId, text, { photo, buttons });
   }
   return true;
 }

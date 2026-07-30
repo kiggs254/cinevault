@@ -194,6 +194,43 @@ export async function notifyUser(
   }
 }
 
+/**
+ * A download/library event: notify the requesting member (their own chat) AND
+ * mirror it to the owner as an activity feed, prefixed with who did it. Skips the
+ * owner copy when the member IS the owner chat (avoids a duplicate).
+ */
+export async function notifyActivity(
+  userId: string | null | undefined,
+  text: string,
+  opts?: { photo?: string | null; buttons?: NotifyButton[] },
+): Promise<void> {
+  if (userId) await notifyUser(userId, text, opts);
+  try {
+    const cfg = await getConfig();
+    if (!cfg.telegram.botToken || !cfg.telegram.chatId) return;
+    let who = "";
+    let memberChat = "";
+    if (userId) {
+      const m = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { username: true, telegramChatId: true },
+      });
+      memberChat = m?.telegramChatId ?? "";
+      who = m?.username ? `👤 ${m.username} · ` : "";
+    }
+    if (memberChat && String(memberChat) === String(cfg.telegram.chatId)) return; // already delivered via notifyUser
+    const base = (cfg.appUrl ?? "").replace(/\/$/, "");
+    const buttons: UrlButton[] = (opts?.buttons ?? []).map((b) => ({ text: b.text, url: `${base}${b.path}` }));
+    if (opts?.photo) {
+      await sendPhoto(cfg.telegram.botToken, cfg.telegram.chatId, opts.photo, `${who}${text}`, buttons);
+    } else {
+      await sendMessage(cfg.telegram.botToken, cfg.telegram.chatId, `${who}${text}`, buttons);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Ping the owner with Approve/Deny buttons for a pending registration. */
 export async function notifyOwnerNewRegistration(user: {
   id: string;

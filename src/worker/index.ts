@@ -14,7 +14,7 @@ import { scanWantedMovies } from "../lib/service/wanted";
 import { ensureBootstrapAdmin } from "../lib/service/users";
 import { runRetention } from "../lib/service/retention";
 import { startTelegramBot } from "../lib/telegram/bot";
-import { notify, notifyUser } from "../lib/telegram/client";
+import { notifyActivity } from "../lib/telegram/client";
 import { prisma } from "../lib/db";
 import { getConfig, type ResolvedConfig } from "../lib/config";
 import { QbClient, parseInfoHash, isHeldByQbittorrent, type QbTorrentInfo } from "../lib/torrent/qbittorrent";
@@ -654,8 +654,8 @@ async function processDownload(id: string): Promise<void> {
       photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
       buttons: [{ text: "▶️ Open your library", path: "/library" }],
     };
-    if (dl.userId) await notifyUser(dl.userId, doneText, doneOpts);
-    else await notify(doneText, doneOpts);
+    // Notify the member AND mirror to the admin's activity feed.
+    await notifyActivity(dl.userId, doneText, doneOpts);
   }
   void logActivity(`✓ ${organized.cleanTitle}${seLabel} added to your library`, {
     kind: "done",
@@ -789,8 +789,7 @@ const grabWorker = new Worker<DownloadJobData>(
           const what = r.mode === "pack" ? "the full season" : `${r.queued} episode${r.queued === 1 ? "" : "s"}`;
           const text = `📥 Adding ${g.title} — Season ${g.season} to your library (${what}).`;
           const opts = { buttons: [{ text: "📚 Open your library", path: "/library" }] };
-          if (g.userId) await notifyUser(g.userId, text, opts);
-          else await notify(text, opts);
+          await notifyActivity(g.userId, text, opts);
         }
       } catch (e) {
         console.error(`[grab] season-grab ${g.title} S${g.season} failed:`, (e as Error).message);

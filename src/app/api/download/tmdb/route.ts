@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
   try {
     if (b.mediaType === "movie") {
-      const dl = await grabMovie({ tmdbId, title, year: b.year ?? null, userId: user.id });
+      const dl = await grabMovie({ tmdbId, title, year: b.year ?? null, userId: user.id, announce: true });
       return dl
         ? NextResponse.json({ queued: [dl.title] })
         : NextResponse.json({ error: "No suitable release found" }, { status: 404 });
