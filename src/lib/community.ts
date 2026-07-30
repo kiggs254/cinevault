@@ -7,7 +7,7 @@
 export const HOW_IT_WORKS: { title: string; body: string }[] = [
   {
     title: "Find it",
-    body: "Use Search or Discover to find any movie or show, open it, and tap Add to Library.",
+    body: "In the Cinevault app, use Search or Discover to find any movie or show, open it, and tap Add to Library.",
   },
   {
     title: "We fetch it",
@@ -15,7 +15,7 @@ export const HOW_IT_WORKS: { title: string; body: string }[] = [
   },
   {
     title: "Watch on Jellyfin",
-    body: "Install the free Jellyfin app on any device and sign in with the same username & password to stream anything in your library.",
+    body: "Install the free Jellyfin app on any device and sign in with the same username & password. You can stream your own additions plus everything other members have added to their libraries.",
   },
   {
     title: "Your own space",

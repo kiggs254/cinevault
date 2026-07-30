@@ -20,7 +20,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { NotifyToggleFull } from "@/components/notify-toggle";
-import { JELLYFIN_APPS, GUIDELINES } from "@/lib/community";
+import { JELLYFIN_APPS, GUIDELINES, HOW_IT_WORKS } from "@/lib/community";
+
+const HOW_ICONS = [SearchIcon, MonitorPlay, Tv, Sparkles];
 
 const TABS = [
   { id: "how", label: "How it works", icon: BookOpen },
@@ -181,35 +183,17 @@ export default function GuidePage() {
             gist:
           </p>
           <ul className="space-y-3">
-            <li className="flex gap-3">
-              <SearchIcon size={16} className="mt-0.5 flex-none text-accent" />
-              <span>
-                <b className="text-ink">Find it.</b> Use Search or Discover to find a movie or show, open it, and
-                tap <b className="text-ink">Add to Library</b>.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <MonitorPlay size={16} className="mt-0.5 flex-none text-accent" />
-              <span>
-                <b className="text-ink">We fetch it.</b> If it&apos;s already in the shared library it&apos;s added
-                instantly; otherwise it&apos;s downloaded and appears in your Library, ready to watch — usually
-                within minutes.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <Tv size={16} className="mt-0.5 flex-none text-accent" />
-              <span>
-                <b className="text-ink">Watch on Jellyfin.</b> Install the Jellyfin app on any device and sign in
-                with the same username &amp; password (see <b className="text-ink">Set up Jellyfin</b>).
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <Sparkles size={16} className="mt-0.5 flex-none text-accent" />
-              <span>
-                <b className="text-ink">Your own library.</b> Everyone has their own list. You can also connect
-                Telegram to request titles and get a ping when they&apos;re ready.
-              </span>
-            </li>
+            {HOW_IT_WORKS.map((it, i) => {
+              const Icon = HOW_ICONS[i] ?? Sparkles;
+              return (
+                <li key={it.title} className="flex gap-3">
+                  <Icon size={16} className="mt-0.5 flex-none text-accent" />
+                  <span>
+                    <b className="text-ink">{it.title}.</b> {it.body}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
           <p>
             It runs on shared storage and a shared connection, so a few simple house rules keep it fast and safe
