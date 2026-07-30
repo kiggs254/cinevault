@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Loader2, Search as SearchIcon } from "lucide-react";
+import { RefreshCw, X, Play, FolderOpen, Tv, Film, HardDrive, Loader2, Trash2, Search as SearchIcon } from "lucide-react";
 import { overallProgress } from "@/lib/progress";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
+import { useConfirm } from "@/components/confirm-dialog";
 
 interface Item {
   id: string;
@@ -39,6 +40,18 @@ function epLabel(i: Item): string {
   return i.releaseName;
 }
 
+/** Group a title's library items by season (0 = movie / specials) for per-season removal. */
+function itemsBySeason(t: TitleGroup): { season: number; ids: string[] }[] {
+  const m = new Map<number, string[]>();
+  for (const i of t.items) {
+    const s = i.season ?? 0;
+    const arr = m.get(s) ?? [];
+    arr.push(i.id);
+    m.set(s, arr);
+  }
+  return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([season, ids]) => ({ season, ids }));
+}
+
 /** A group's overall "adding" progress (0-100) — the furthest-along active file,
  * on a single forward-only scale across search/download/upload. */
 function addingPct(t: TitleGroup): number {
@@ -69,6 +82,8 @@ export default function LibraryPage() {
   const [genre, setGenre] = useState("");
   const [query, setQuery] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const confirm = useConfirm();
 
   // Only the admin sees raw filenames / sizes / open-raw; members watch via Jellyfin.
   useEffect(() => {
@@ -140,6 +155,30 @@ export default function LibraryPage() {
       window.open(url, "_blank", "noopener");
     } catch {
       setErr("Not on Jellyfin yet — give the library a minute to catch up.");
+    }
+  }
+
+  /** Remove the given download rows from the library (confirmed), then refresh in place. */
+  async function removeAndRefresh(
+    ids: string[],
+    opts: { title: string; message: string; confirmLabel?: string },
+  ) {
+    if (!ids.length || removing) return;
+    if (!(await confirm({ title: opts.title, message: opts.message, confirmLabel: opts.confirmLabel ?? "Remove" }))) return;
+    setRemoving(true);
+    setErr("");
+    try {
+      const oks = await Promise.all(
+        ids.map((id) => fetch(`/api/downloads/${id}`, { method: "DELETE" }).then((r) => r.ok).catch(() => false)),
+      );
+      if (oks.some((ok) => !ok)) setErr("Some items couldn’t be removed.");
+      const d = await jsonFetch<{ titles: TitleGroup[] }>("/api/library/titles");
+      setTitles(d.titles);
+      setActive((cur) => (cur ? d.titles.find((t) => t.key === cur.key) ?? null : null));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -364,6 +403,75 @@ export default function LibraryPage() {
                 It&apos;s in your library — press <span className="text-ink">Play on Jellyfin</span> above to watch.
               </p>
             ) : null}
+
+            {active.items.length > 0 && (
+              <div className="border-t border-border p-4">
+                <p className="label mb-2 flex items-center gap-1.5">
+                  <Trash2 size={12} /> Remove from your library
+                </p>
+                {active.kind === "TV" && itemsBySeason(active).length > 1 ? (
+                  <div className="space-y-2">
+                    {itemsBySeason(active).map(({ season, ids }) => (
+                      <div
+                        key={season}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2"
+                      >
+                        <span className="text-sm text-ink">{season > 0 ? `Season ${season}` : "Specials"}</span>
+                        <button
+                          disabled={removing}
+                          onClick={() =>
+                            removeAndRefresh(ids, {
+                              title: `Remove Season ${season}?`,
+                              message: `“${active.title}” Season ${season} will be removed from your library. If no one else has it, it’s cleared from storage too — you can add it again anytime.`,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-danger hover:bg-surface disabled:opacity-50"
+                        >
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      disabled={removing}
+                      onClick={() =>
+                        removeAndRefresh(
+                          active.items.map((i) => i.id),
+                          {
+                            title: `Remove all of “${active.title}”?`,
+                            message:
+                              "Every season you’ve added will be removed from your library. Storage is freed for any part no one else has.",
+                            confirmLabel: "Remove all",
+                          },
+                        )
+                      }
+                      className="btn btn-ghost w-full text-danger"
+                    >
+                      {removing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Remove entire show
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    disabled={removing}
+                    onClick={() =>
+                      removeAndRefresh(
+                        active.items.map((i) => i.id),
+                        {
+                          title: `Remove “${active.title}” from your library?`,
+                          message:
+                            "If no one else has it, it’s cleared from storage too — you can always add it again later.",
+                        },
+                      )
+                    }
+                    className="btn btn-ghost w-full text-danger"
+                  >
+                    {removing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Remove from my library
+                  </button>
+                )}
+                <p className="mt-2 text-[11px] text-faint">
+                  Finished watching? Removing frees shared space — you can add it again anytime.
+                </p>
+              </div>
+            )}
             {isAdmin && (
               <p className="flex items-center gap-1.5 border-t border-border p-3 text-[11px] text-faint">
                 <HardDrive size={12} /> Admin: “Open” streams the raw file. Members watch on Jellyfin.

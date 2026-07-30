@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDownload, removeDownload, retryDownload, resourceDownload } from "@/lib/service/downloads";
-import { getSessionUser } from "@/lib/session";
+import { getSessionUser, isAdmin } from "@/lib/session";
 import { prisma } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -48,8 +48,11 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  // Members may only remove their own library entry; the admin (owner) can remove
+  // any entry to manage shared storage. removeDownload frees the S3 object only
+  // when no other member's row still references it.
   const owned = await prisma.download.findFirst({
-    where: { id, userId: user.id },
+    where: isAdmin(user) ? { id } : { id, userId: user.id },
     select: { id: true },
   });
   if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 });
