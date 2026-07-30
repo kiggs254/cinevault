@@ -137,3 +137,118 @@ export async function findItemIdByTmdb(
   }
   return null;
 }
+
+/* ------------------------------------------------------------------ *
+ * Live TV: point Jellyfin at the app's aggregated M3U + XMLTV feed.
+ * ------------------------------------------------------------------ */
+
+export type LiveTvSyncResult = {
+  ok: boolean;
+  tuner: "added" | "updated" | "exists" | "error";
+  guide: "added" | "updated" | "exists" | "skipped" | "error";
+  message: string;
+};
+
+/** Pathname of a URL (ignoring the key query) — used to dedupe our own endpoints. */
+function pathOf(url: unknown): string {
+  if (typeof url !== "string") return "";
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "";
+  }
+}
+
+/** Trigger the "Refresh Guide" scheduled task so new channels/EPG show up now. */
+async function refreshGuide(cfg: JellyfinConfig): Promise<void> {
+  const tasks = await jfetch(cfg, "GET", "/ScheduledTasks?isHidden=false");
+  if (!tasks.ok || !Array.isArray(tasks.data)) return;
+  const t = tasks.data.find(
+    (x: any) => x?.Key === "RefreshGuide" || /refresh guide/i.test(String(x?.Name ?? "")),
+  );
+  if (t?.Id) await jfetch(cfg, "POST", `/ScheduledTasks/Running/${t.Id}`);
+}
+
+/**
+ * Ensure Jellyfin has an M3U tuner + (optional) XMLTV guide pointing at our
+ * aggregated endpoints. Idempotent: matches our endpoints by path so a rotated
+ * key heals in place instead of piling up duplicates.
+ */
+export async function syncLiveTv(
+  cfg: JellyfinConfig,
+  urls: { m3uUrl: string; epgUrl?: string },
+): Promise<LiveTvSyncResult> {
+  if (!cfg.url || !cfg.apiKey) {
+    return { ok: false, tuner: "error", guide: "skipped", message: "Jellyfin URL + API key required" };
+  }
+
+  const opts = await jfetch(cfg, "GET", "/System/Configuration/livetv");
+  const tunerHosts: any[] = Array.isArray(opts.data?.TunerHosts) ? opts.data.TunerHosts : [];
+  const providers: any[] = Array.isArray(opts.data?.ListingProviders) ? opts.data.ListingProviders : [];
+
+  // ---- M3U tuner ----
+  let tuner: LiveTvSyncResult["tuner"] = "error";
+  const m3uPath = pathOf(urls.m3uUrl);
+  const mine = tunerHosts.find((t) => t?.Type === "m3u" && pathOf(t?.Url) === m3uPath);
+  if (mine && mine.Url === urls.m3uUrl) {
+    tuner = "exists";
+  } else {
+    if (mine?.Id) await jfetch(cfg, "DELETE", `/LiveTv/TunerHosts?id=${encodeURIComponent(mine.Id)}`);
+    const r = await jfetch(cfg, "POST", "/LiveTv/TunerHosts", {
+      Type: "m3u",
+      Url: urls.m3uUrl,
+      FriendlyName: "Cinevault Live TV",
+      AllowHWTranscoding: true,
+      EnableStreamLooping: false,
+      ImportFavoritesOnly: false,
+      TunerCount: 0,
+    });
+    tuner = r.ok ? (mine ? "updated" : "added") : "error";
+  }
+
+  // ---- XMLTV guide (optional) ----
+  let guide: LiveTvSyncResult["guide"] = "skipped";
+  if (urls.epgUrl) {
+    const epgPath = pathOf(urls.epgUrl);
+    const mineP = providers.find((p) => p?.Type === "xmltv" && pathOf(p?.Path) === epgPath);
+    if (mineP && mineP.Path === urls.epgUrl) {
+      guide = "exists";
+    } else {
+      const r = await jfetch(cfg, "POST", "/LiveTv/ListingProviders?validateListings=false", {
+        ...(mineP?.Id ? { Id: mineP.Id } : {}),
+        Type: "xmltv",
+        Path: urls.epgUrl,
+        EnableAllTuners: true,
+      });
+      guide = r.ok ? (mineP ? "updated" : "added") : "error";
+    }
+  }
+
+  await refreshGuide(cfg).catch(() => {});
+
+  const ok = tuner !== "error" && guide !== "error";
+  const parts = [
+    tuner === "error" ? "tuner failed" : `tuner ${tuner}`,
+    guide === "skipped" ? null : guide === "error" ? "guide failed" : `guide ${guide}`,
+  ].filter(Boolean);
+  return { ok, tuner, guide, message: parts.join(", ") };
+}
+
+/** Read the current Live TV wiring so the UI can show what's connected. */
+export async function getLiveTvStatus(
+  cfg: JellyfinConfig,
+  urls: { m3uUrl: string; epgUrl?: string },
+): Promise<{ reachable: boolean; tunerConfigured: boolean; guideConfigured: boolean }> {
+  if (!cfg.url || !cfg.apiKey) return { reachable: false, tunerConfigured: false, guideConfigured: false };
+  const opts = await jfetch(cfg, "GET", "/System/Configuration/livetv");
+  if (!opts.ok) return { reachable: false, tunerConfigured: false, guideConfigured: false };
+  const tunerHosts: any[] = Array.isArray(opts.data?.TunerHosts) ? opts.data.TunerHosts : [];
+  const providers: any[] = Array.isArray(opts.data?.ListingProviders) ? opts.data.ListingProviders : [];
+  const m3uPath = pathOf(urls.m3uUrl);
+  const epgPath = pathOf(urls.epgUrl);
+  return {
+    reachable: true,
+    tunerConfigured: tunerHosts.some((t) => t?.Type === "m3u" && pathOf(t?.Url) === m3uPath),
+    guideConfigured: !!epgPath && providers.some((p) => p?.Type === "xmltv" && pathOf(p?.Path) === epgPath),
+  };
+}

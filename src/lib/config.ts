@@ -39,6 +39,7 @@ export interface ResolvedConfig {
   jellyfin: { url?: string; publicUrl?: string; apiKey?: string; userId?: string };
   telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
   torbox: { apiKey?: string };
+  liveTv: { key?: string; groupBySource: boolean }; // aggregated M3U/EPG for Jellyfin Live TV
   appUrl: string; // public base URL of this app (for deep-link CTAs)
   retention: { autoDeleteWatched: boolean; days: number };
   discovery: { autoFollowFromJellyfin: boolean };
@@ -59,6 +60,7 @@ const SECRET_KEYS = [
   "telegramBotToken",
   "torboxApiKey",
   "vapidPrivateKey",
+  "liveTvKey",
 ] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -169,6 +171,10 @@ export async function getConfig(): Promise<ResolvedConfig> {
       allowedIds: parseIds(str(settings.telegramAllowedIds) ?? env.TELEGRAM_ALLOWED_IDS),
     },
     torbox: { apiKey: dec("torboxApiKey") ?? env.TORBOX_API_KEY },
+    liveTv: {
+      key: dec("liveTvKey"),
+      groupBySource: settings.liveTvGroupBySource !== false, // default on
+    },
     appUrl: str(settings.appUrl) ?? env.APP_URL,
     retention: {
       autoDeleteWatched: settings.autoDeleteWatched === true,
@@ -207,6 +213,7 @@ export async function getMaskedConfig() {
     telegramBotToken: !!env.TELEGRAM_BOT_TOKEN,
     torboxApiKey: !!env.TORBOX_API_KEY,
     vapidPrivateKey: !!env.VAPID_PRIVATE_KEY,
+    liveTvKey: false, // no env fallback — self-generated on first use
   };
   const secretsSet = Object.fromEntries(
     SECRET_KEYS.map((k) => [k, !!secrets[k] || envSecretPresent[k]]),

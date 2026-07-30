@@ -16,6 +16,7 @@ import {
   Users,
   Send,
   BookOpen,
+  Tv,
   type LucideIcon,
 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
@@ -38,6 +39,7 @@ function navFor(role?: string) {
   const items = [...BASE_NAV];
   if (role === "admin") {
     items.push({ href: "/downloads", label: "Downloads", icon: Download });
+    items.push({ href: "/livetv", label: "Live TV", icon: Tv });
     items.push({ href: "/users", label: "Members", icon: Users });
     items.push({ href: "/settings", label: "Settings", icon: Settings2 });
   }

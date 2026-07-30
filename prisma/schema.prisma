@@ -248,6 +248,28 @@ model WantedMovie {
   @@index([userId])
 }
 
+/// A live-TV M3U source (remote URL or pasted text). The app merges every enabled
+/// playlist into one aggregated M3U + XMLTV feed that Jellyfin's Live TV loads, so
+/// members can add many (legally-sourced) providers without touching Jellyfin.
+model Playlist {
+  id           String    @id @default(cuid())
+  name         String
+  sourceType   String    @default("url") // "url" (remote) | "text" (pasted raw M3U)
+  url          String?   @db.Text // sourceType = "url"
+  content      String?   @db.Text // sourceType = "text" — raw #EXTM3U body
+  epgUrl       String?   @db.Text // optional XMLTV EPG URL for this source
+  enabled      Boolean   @default(true)
+  order        Int       @default(0) // display + merge order
+  channelCount Int       @default(0) // channels found at last refresh
+  lastError    String?   @db.Text // last fetch/parse error (null = healthy)
+  refreshedAt  DateTime? // last successful fetch/parse
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([enabled])
+  @@index([order])
+}
+
 /// A cached, personalized suggestion (a TMDB title, not a release). Surfaced in
 /// the redesigned Discover feed; the user can add (download/follow) or dismiss.
 model Recommendation {

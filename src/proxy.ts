@@ -3,7 +3,17 @@ import { jwtVerify } from "jose";
 
 // Public paths that never require a session.
 const PUBLIC_PAGES = ["/login", "/register", "/welcome"];
-const PUBLIC_API = ["/api/auth/login", "/api/auth/register", "/api/auth/status", "/api/health"];
+// The live-TV M3U/EPG feeds are fetched by Jellyfin with no session cookie; they
+// enforce their own `?key=` bearer at the handler (mismatch → 404), so they must
+// bypass the session gate here.
+const PUBLIC_API = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/status",
+  "/api/health",
+  "/api/livetv/m3u",
+  "/api/livetv/epg",
+];
 
 const COOKIE = "moviehub_session";
 
