@@ -93,6 +93,7 @@ model User {
   notifyTelegram    Boolean   @default(true)
   statusToken       String    @unique @default(cuid()) // opaque token for the public /welcome status poll
   invitedById       String? // who referred this member (via their invite code)
+  acceptedGuidelinesAt DateTime? // when they accepted the community guidelines at registration
   createdAt         DateTime  @default(now())
   approvedAt        DateTime?
 

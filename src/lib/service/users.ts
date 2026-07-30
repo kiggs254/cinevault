@@ -64,12 +64,16 @@ export async function registerUser(input: {
   username: string;
   password: string;
   code?: string;
+  acceptedGuidelines?: boolean;
 }): Promise<RegisterResult> {
   const cfg = await getConfig();
   if (!cfg.registration.enabled) return { ok: false, error: "Registration is currently closed." };
   // Invite-only: every new member needs a valid referral code from an existing member.
   const invite = await validInvite(input.code);
   if (!invite) return { ok: false, error: "You need a valid invite code from a member to join." };
+  if (!input.acceptedGuidelines) {
+    return { ok: false, error: "Please read and accept the community guidelines to continue." };
+  }
   const username = normUsername(input.username);
   if (!/^[a-z0-9_]{3,20}$/.test(username)) {
     return { ok: false, error: "Username must be 3–20 characters: lowercase letters, numbers, or underscore." };
@@ -92,6 +96,7 @@ export async function registerUser(input: {
       status: "pending",
       role: "member",
       invitedById: invite.createdById,
+      acceptedGuidelinesAt: new Date(),
     },
   });
   await consumeInvite(invite.id);

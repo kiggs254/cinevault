@@ -20,14 +20,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { NotifyToggleFull } from "@/components/notify-toggle";
-
-/* ------------------------------- shared data ------------------------------ */
-const APPS: { label: string; href: string; icon: typeof Smartphone }[] = [
-  { label: "iPhone / iPad", href: "https://apps.apple.com/app/jellyfin-mobile/id1480192618", icon: Smartphone },
-  { label: "Android", href: "https://play.google.com/store/apps/details?id=org.jellyfin.mobile", icon: Smartphone },
-  { label: "Android TV / Fire TV", href: "https://play.google.com/store/apps/details?id=org.jellyfin.androidtv", icon: Tv },
-  { label: "Roku, LG, Samsung & more", href: "https://jellyfin.org/downloads/clients/", icon: Tv },
-];
+import { JELLYFIN_APPS, GUIDELINES } from "@/lib/community";
 
 const TABS = [
   { id: "how", label: "How it works", icon: BookOpen },
@@ -230,18 +223,21 @@ export default function GuidePage() {
           <div>
             <p className="label mb-2">1 · Install Jellyfin</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {APPS.map((a) => (
-                <a
-                  key={a.label}
-                  href={a.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
-                >
-                  <a.icon size={15} className="flex-none" />
-                  <span className="min-w-0 leading-snug">{a.label}</span>
-                </a>
-              ))}
+              {JELLYFIN_APPS.map((a) => {
+                const Icon = a.kind === "tv" ? Tv : Smartphone;
+                return (
+                  <a
+                    key={a.label}
+                    href={a.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                  >
+                    <Icon size={15} className="flex-none" />
+                    <span className="min-w-0 leading-snug">{a.label}</span>
+                  </a>
+                );
+              })}
             </div>
           </div>
           <div>
@@ -274,24 +270,7 @@ export default function GuidePage() {
             <AlertTriangle size={16} className="flex-none text-accent" />
             These aren&apos;t suggestions — breaking them can get your access removed.
           </div>
-          {[
-            {
-              t: "Don't share your account — 1 screen at a time.",
-              d: "Your login is yours alone. Only one stream can play at a time; sharing your account or streaming on multiple screens will flag it and may get you removed.",
-            },
-            {
-              t: "For shows, add only the season(s) you'll actually watch.",
-              d: "Storage is shared. Don't bulk-add a whole series “just in case” — pick the season you're watching now; add the next one when you get there.",
-            },
-            {
-              t: "Finished watching? Delete it from your library.",
-              d: "Clear things out once you're done to free up space. You can always request the exact same title again later — nothing is lost.",
-            },
-            {
-              t: "Keep it private — check with the admin first.",
-              d: "Never tell anyone about Cinevault or hand out an invite without clearing it with the admin. This stays small and trusted on purpose.",
-            },
-          ].map((r) => (
+          {GUIDELINES.map((r) => (
             <div key={r.t} className="rounded-lg border border-border bg-surface-2 p-3">
               <p className="flex items-start gap-2 font-medium text-ink">
                 <ShieldCheck size={16} className="mt-0.5 flex-none text-accent" /> {r.t}

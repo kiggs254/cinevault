@@ -15,11 +15,13 @@ export async function POST(req: Request) {
     username?: string;
     password?: string;
     code?: string;
+    acceptedGuidelines?: boolean;
   };
   const result = await registerUser({
     username: String(body.username ?? ""),
     password: String(body.password ?? ""),
     code: body.code ? String(body.code) : undefined,
+    acceptedGuidelines: body.acceptedGuidelines === true,
   });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ ok: true, statusToken: result.statusToken });
