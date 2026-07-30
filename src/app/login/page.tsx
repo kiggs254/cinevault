@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clapperboard, Lock, User as UserIcon, Loader2, ArrowRight } from "lucide-react";
@@ -11,6 +11,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Where to land after sign-in (e.g. a "Request" link from Jellyfin). Only
+  // same-origin relative paths are honoured.
+  const [next, setNext] = useState("/");
+  useEffect(() => {
+    const n = new URLSearchParams(window.location.search).get("next") ?? "";
+    if (n.startsWith("/") && !n.startsWith("//")) setNext(n);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,7 +29,7 @@ export default function LoginPage() {
       body: JSON.stringify({ username, password }),
     });
     if (res.ok) {
-      router.replace("/");
+      router.replace(next);
       router.refresh();
     } else {
       const data = await res.json().catch(() => ({}));

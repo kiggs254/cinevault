@@ -5,6 +5,7 @@ import { ProwlarrClient } from "@/lib/indexers/prowlarr";
 import { bucketReachable, makeS3 } from "@/lib/storage/s3";
 import { providerFor } from "@/lib/llm/providers";
 import { tgApi, sendMessage } from "@/lib/telegram/client";
+import { setJellyfinRequestLink } from "@/lib/jellyfin/admin";
 import { getSessionUser, isAdmin } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -114,6 +115,18 @@ export async function POST(req: Request) {
         return NextResponse.json({
           ok: true,
           message: `Bot @${me.username}${cfg.telegram.chatId ? " — test message sent" : " — now message the bot to link your chat"}`,
+        });
+      }
+      case "jellyfinLink": {
+        if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) throw new Error("Jellyfin URL + API key required");
+        const base = (cfg.appUrl ?? "").replace(/\/$/, "");
+        if (!/^https?:\/\//i.test(base)) throw new Error("Set the app's public URL (APP_URL) first");
+        const ok = await setJellyfinRequestLink(cfg.jellyfin, `${base}/search?from=jellyfin`);
+        return NextResponse.json({
+          ok,
+          message: ok
+            ? "Added “Request on Cinevault” to the Jellyfin login screen"
+            : "Jellyfin didn't accept the change",
         });
       }
       default:

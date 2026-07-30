@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Plug, Loader2, Check, X, Sparkles, DownloadCloud, HardDrive, Clapperboard, Bell } from "lucide-react";
+import { Save, Plug, Loader2, Check, X, Sparkles, DownloadCloud, HardDrive, Clapperboard, Bell, Link2 } from "lucide-react";
 import { jsonFetch } from "@/lib/client";
 
 type Settings = Record<string, string | number | boolean>;
@@ -357,6 +357,36 @@ export default function SettingsPage() {
                         {t?.busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
                         Test
                       </button>
+                      {section.test === "jellyfin" &&
+                        (() => {
+                          const tl = tests["jellyfinLink"];
+                          return (
+                            <>
+                              {tl && !tl.busy && (
+                                <span
+                                  className="flex items-center gap-1 text-xs"
+                                  style={{ color: tl.ok ? "var(--color-success)" : "var(--color-danger)" }}
+                                >
+                                  {tl.ok ? <Check size={13} /> : <X size={13} />}
+                                  <span className="max-w-[10rem] truncate">{tl.msg}</span>
+                                </span>
+                              )}
+                              <button
+                                className="btn btn-ghost"
+                                onClick={() => runTest("jellyfinLink")}
+                                disabled={tl?.busy}
+                                title="Adds a “Request on Cinevault” link to your Jellyfin login screen (shows on every device)"
+                              >
+                                {tl?.busy ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Link2 size={14} />
+                                )}
+                                Add request link
+                              </button>
+                            </>
+                          );
+                        })()}
                     </div>
                   )}
                 </div>

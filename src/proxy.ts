@@ -48,7 +48,12 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   }
 
   if (!authed) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    // Preserve where they were headed (e.g. a "Request" deep link from Jellyfin)
+    // so login can return them there.
+    const login = new URL("/login", req.url);
+    const dest = pathname + (req.nextUrl.search || "");
+    if (dest && dest !== "/") login.searchParams.set("next", dest);
+    return NextResponse.redirect(login);
   }
   return NextResponse.next();
 }

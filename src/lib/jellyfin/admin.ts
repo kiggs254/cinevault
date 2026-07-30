@@ -98,6 +98,27 @@ export async function deleteJellyfinUser(cfg: JellyfinConfig, userId: string): P
   return res.ok;
 }
 
+/**
+ * Surface Cinevault inside Jellyfin without a plugin: put a "Request titles"
+ * line on the Jellyfin login screen (branding LoginDisclaimer) — it renders on
+ * every client (web + native mobile/TV). Pass an empty url to clear it. The
+ * disclaimer supports markdown, so we use a markdown link with the raw URL as a
+ * fallback for clients that render it plain. Best-effort.
+ */
+export async function setJellyfinRequestLink(cfg: JellyfinConfig, url: string): Promise<boolean> {
+  const cur = await jfetch(cfg, "GET", "/System/Configuration/branding");
+  const branding =
+    cur.ok && cur.data && typeof cur.data === "object" ? (cur.data as Record<string, unknown>) : {};
+  const disclaimer = url
+    ? `🎬 Can’t find something to watch? **[Request it on Cinevault](${url})** — or open ${url}`
+    : "";
+  const res = await jfetch(cfg, "POST", "/System/Configuration/branding", {
+    ...branding,
+    LoginDisclaimer: disclaimer,
+  });
+  return res.ok;
+}
+
 /** The Jellyfin server id (stable) — needed for `/web/#/details?serverId=`. */
 let cachedServerId: string | null = null;
 export async function getServerId(cfg: JellyfinConfig): Promise<string | null> {
