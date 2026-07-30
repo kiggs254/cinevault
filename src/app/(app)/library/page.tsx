@@ -94,16 +94,18 @@ export default function LibraryPage() {
     [titles, type, genre, query],
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` refreshes (the progress poll) don't toggle the loading state, so the
+  // grid updates in place instead of blinking on every tick.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setErr("");
     try {
       const d = await jsonFetch<{ titles: TitleGroup[] }>("/api/library/titles");
       setTitles(d.titles);
     } catch (e) {
-      setErr((e as Error).message);
+      if (!silent) setErr((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -111,12 +113,12 @@ export default function LibraryPage() {
     void load();
   }, [load]);
 
-  // While anything is still being added, refresh so progress advances and newly
-  // ready titles appear without a manual reload.
+  // While anything is still being added, refresh (silently) so progress advances
+  // and newly ready titles appear without a manual reload — no flicker.
   const anyDownloading = titles.some((t) => t.downloading);
   useEffect(() => {
     if (!anyDownloading) return;
-    const t = setInterval(() => void load(), 8000);
+    const t = setInterval(() => void load(true), 8000);
     return () => clearInterval(t);
   }, [anyDownloading, load]);
 
@@ -150,7 +152,7 @@ export default function LibraryPage() {
             Library
           </h1>
         </div>
-        <button className="btn btn-ghost" onClick={load}>
+        <button className="btn btn-ghost" onClick={() => load()}>
           <RefreshCw size={15} /> Refresh
         </button>
       </header>
@@ -280,6 +282,20 @@ export default function LibraryPage() {
                 <X size={18} />
               </button>
             </div>
+            {active.downloading && (
+              <div className="border-b border-border p-4">
+                <p className="mb-2 flex items-center gap-2 text-sm font-medium text-accent">
+                  <Loader2 size={15} className="animate-spin" /> {addingLabel(active)}
+                </p>
+                <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className="h-full bg-accent transition-all duration-500"
+                    style={{ width: `${Math.max(4, addingPct(active))}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-faint">Hang tight — it&apos;ll be ready to watch shortly.</p>
+              </div>
+            )}
             {active.tmdbId && active.count > 0 && (
               <div className="border-b border-border p-4">
                 <button className="btn btn-accent w-full" onClick={() => openJellyfin(active)}>
@@ -343,11 +359,11 @@ export default function LibraryPage() {
                     </div>
                   ))}
               </div>
-            ) : (
+            ) : active.count > 0 ? (
               <p className="p-5 text-center text-sm text-faint">
                 It&apos;s in your library — press <span className="text-ink">Play on Jellyfin</span> above to watch.
               </p>
-            )}
+            ) : null}
             {isAdmin && (
               <p className="flex items-center gap-1.5 border-t border-border p-3 text-[11px] text-faint">
                 <HardDrive size={12} /> Admin: “Open” streams the raw file. Members watch on Jellyfin.

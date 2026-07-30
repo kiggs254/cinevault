@@ -15,7 +15,6 @@ import {
   DownloadCloud,
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/util";
-import { overallProgress } from "@/lib/progress";
 import { useConfirm } from "@/components/confirm-dialog";
 import type { DownloadDTO, DownloadStatus } from "@/lib/types";
 
@@ -149,11 +148,11 @@ export function DownloadRow({
                 <div className="track">
                   <div
                     className={`track-fill ${active ? "active" : ""}`}
-                    style={{ width: `${Math.max(2, overallProgress(d.status, d.progress))}%` }}
+                    style={{ width: `${Math.max(2, d.progress)}%` }}
                   />
                 </div>
                 <div className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.7rem] text-muted">
-                  <span>{Math.round(overallProgress(d.status, d.progress))}%</span>
+                  <span>{d.progress.toFixed(1)}%</span>
                   {uploading ? (
                     <span className="flex items-center gap-1">
                       <UploadCloud size={12} /> to S3

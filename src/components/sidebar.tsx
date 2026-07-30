@@ -156,15 +156,6 @@ function NavList({
                 {activeCount}
               </span>
             )}
-            {href === "/chat" && activeCount > 0 && (
-              <span
-                className="relative ml-auto flex h-2 w-2 flex-none items-center justify-center"
-                title={`${activeCount} working in the background`}
-              >
-                <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-accent opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
-              </span>
-            )}
           </Link>
         );
       })}
@@ -299,12 +290,6 @@ export function MobileBottomNav() {
               {href === "/downloads" && activeCount > 0 && (
                 <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[0.6rem] font-bold text-[#1a1206]">
                   {activeCount}
-                </span>
-              )}
-              {href === "/chat" && activeCount > 0 && (
-                <span className="absolute -right-1.5 -top-1 flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" />
                 </span>
               )}
             </span>
