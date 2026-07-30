@@ -214,8 +214,10 @@ model FollowedShow {
   overview      String?   @db.Text
   status        String? // TMDB series status: "Returning Series" | "Ended" | ...
   autoDownload  Boolean   @default(true)
+  autoAdvance   Boolean   @default(false) // watch-driven: pull the next season as they near the end of the current one
+  startSeason   Int? // the season the member chose to begin at (progression starts here)
   quality       String    @default("any")
-  source        String    @default("manual") // manual | jellyfin | reco
+  source        String    @default("manual") // manual | jellyfin | reco | progressive
   lastCheckedAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

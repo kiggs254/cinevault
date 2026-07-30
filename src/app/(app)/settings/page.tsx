@@ -110,9 +110,11 @@ const SECTIONS: Section[] = [
   },
   {
     group: "storage",
-    title: "Storage retention",
-    desc: "Automatically delete watched episodes & movies from S3 after a set period to reclaim space. Season packs are never auto-deleted.",
+    title: "Storage lifecycle",
+    desc: "Reclaim S3 space automatically. Idle purge removes titles nobody has watched; watched cleanup removes finished ones. Everything is re-downloadable on request and reference-counted (a shared file only leaves when its last holder does).",
     fields: [
+      { k: "autoDeleteIdle", label: "Auto-delete titles nobody has watched", type: "toggle" },
+      { k: "idleDays", label: "Remove this many days after adding if still unwatched", type: "number" },
       { k: "autoDeleteWatched", label: "Auto-delete watched media from S3", type: "toggle" },
       { k: "retentionDays", label: "Delete this many days after it was watched", type: "number" },
     ],
@@ -153,6 +155,8 @@ const DEFAULTS: Settings = {
   autoFollowFromJellyfin: true,
   autoDeleteWatched: false,
   retentionDays: 30,
+  autoDeleteIdle: true,
+  idleDays: 15,
 };
 
 export default function SettingsPage() {

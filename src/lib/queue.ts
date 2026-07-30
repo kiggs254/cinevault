@@ -93,6 +93,7 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "recover-stuck", every: 5 * MIN, jobId: "recover-stuck-repeat" },
   { name: "retry-failed", every: 15 * MIN, jobId: "retry-failed-repeat" },
   { name: "follow-scan", every: 6 * HOUR, jobId: "follow-scan-repeat" },
+  { name: "season-progress", every: 3 * HOUR, jobId: "season-progress-repeat" },
   { name: "reco-refresh", every: 12 * HOUR, jobId: "reco-refresh-repeat" },
   { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },
   { name: "wanted-scan", every: 6 * HOUR, jobId: "wanted-scan-repeat" },

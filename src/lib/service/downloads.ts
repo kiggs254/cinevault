@@ -425,6 +425,7 @@ async function cloneCompletedTwin(
       tmdbId: sel.tmdbId,
       season,
       episode,
+      s3DeletedAt: null, // a purged copy shouldn't count as owned → let it re-download
       status: { notIn: ["FAILED", "CANCELLED"] },
     },
     orderBy: { createdAt: "desc" },
@@ -437,6 +438,7 @@ async function cloneCompletedTwin(
       season,
       episode,
       s3Key: { not: null },
+      s3DeletedAt: null, // don't adopt a file retention already freed
       NOT: { userId },
     },
     orderBy: { completedAt: "desc" },
@@ -489,12 +491,12 @@ async function adoptSeasonFromStorage(
 ): Promise<void> {
   if (!userId) return;
   const stored = await prisma.download.findMany({
-    where: { status: "COMPLETED", tmdbId, season, s3Key: { not: null }, NOT: { userId } },
+    where: { status: "COMPLETED", tmdbId, season, s3Key: { not: null }, s3DeletedAt: null, NOT: { userId } },
     orderBy: { completedAt: "desc" },
   });
   if (stored.length === 0) return;
   const mine = await prisma.download.findMany({
-    where: { userId, tmdbId, season, status: { notIn: ["FAILED", "CANCELLED"] } },
+    where: { userId, tmdbId, season, s3DeletedAt: null, status: { notIn: ["FAILED", "CANCELLED"] } },
     select: { episode: true },
   });
   const have = new Set<number | null>(mine.map((m) => m.episode));

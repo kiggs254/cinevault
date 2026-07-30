@@ -1,7 +1,137 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Check, X, UserCog, ShieldAlert, Send, Download as DownloadIcon } from "lucide-react";
+import { Loader2, Check, X, UserCog, ShieldAlert, Send, Trash2, Download as DownloadIcon } from "lucide-react";
+
+interface LibItem {
+  id: string;
+  season: number | null;
+  episode: number | null;
+  status: string;
+  sizeBytes: number;
+}
+interface LibTitle {
+  key: string;
+  title: string;
+  year: number | null;
+  kind: string;
+  count: number;
+  downloading: boolean;
+  items: LibItem[];
+}
+
+/** Group a title's rows by season (0 = movie/specials) for per-season removal. */
+function bySeason(items: LibItem[]): { season: number; ids: string[] }[] {
+  const m = new Map<number, string[]>();
+  for (const i of items) {
+    const s = i.season ?? 0;
+    const a = m.get(s) ?? [];
+    a.push(i.id);
+    m.set(s, a);
+  }
+  return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([season, ids]) => ({ season, ids }));
+}
+
+/** Admin drawer: view + prune a specific member's library. */
+function MemberLibraryDrawer({
+  member,
+  onClose,
+  onChanged,
+}: {
+  member: { id: string; username: string };
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [titles, setTitles] = useState<LibTitle[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const r = await fetch(`/api/users/${member.id}/downloads`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({ titles: [] }));
+    setTitles(d.titles ?? []);
+  }, [member.id]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function remove(ids: string[]) {
+    if (!ids.length || busy) return;
+    setBusy(true);
+    try {
+      await Promise.all(ids.map((id) => fetch(`/api/downloads/${id}`, { method: "DELETE" }).catch(() => {})));
+      await load();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sheet fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
+      <div
+        className="sheet-card max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <p className="font-semibold text-ink">{member.username}&apos;s library</p>
+          <button onClick={onClose} className="text-faint hover:text-ink" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-4">
+          {titles === null ? (
+            <p className="flex items-center gap-2 text-sm text-faint">
+              <Loader2 size={15} className="animate-spin" /> Loading…
+            </p>
+          ) : titles.length === 0 ? (
+            <p className="text-sm text-faint">This member&apos;s library is empty.</p>
+          ) : (
+            <div className="space-y-2">
+              {titles.map((t) => {
+                const seasons = bySeason(t.items);
+                return (
+                  <div key={t.key} className="rounded-lg border border-border bg-surface-2 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="min-w-0 truncate text-sm font-medium text-ink">
+                        {t.title}
+                        {t.year ? ` (${t.year})` : ""}
+                        {t.downloading && <span className="ml-2 text-[11px] text-faint">adding…</span>}
+                      </p>
+                      <button
+                        onClick={() => remove(t.items.map((i) => i.id))}
+                        disabled={busy}
+                        className="inline-flex flex-none items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-danger hover:bg-surface disabled:opacity-50"
+                      >
+                        <Trash2 size={13} /> Remove all
+                      </button>
+                    </div>
+                    {t.kind === "TV" && seasons.length > 1 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {seasons.map(({ season, ids }) => (
+                          <button
+                            key={season}
+                            onClick={() => remove(ids)}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
+                          >
+                            <Trash2 size={11} /> {season > 0 ? `S${season}` : "Specials"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-faint">
+            Removing frees shared storage only when no other member still has the same file.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface Member {
   id: string;
@@ -30,6 +160,7 @@ export default function UsersPage() {
   const [forbidden, setForbidden] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
+  const [viewing, setViewing] = useState<{ id: string; username: string } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/users", { cache: "no-store" });
@@ -124,6 +255,14 @@ export default function UsersPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {u._count.downloads > 0 && (
+                        <button
+                          className="btn btn-ghost px-3 py-1.5 text-xs"
+                          onClick={() => setViewing({ id: u.id, username: u.username })}
+                        >
+                          <DownloadIcon size={13} /> Library
+                        </button>
+                      )}
                       {u.status === "pending" && (
                         <>
                           <button
@@ -178,6 +317,10 @@ export default function UsersPage() {
             </section>
           ))}
         </div>
+      )}
+
+      {viewing && (
+        <MemberLibraryDrawer member={viewing} onClose={() => setViewing(null)} onChanged={load} />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { grabMovie, grabSingleEpisode } from "@/lib/service/downloads";
+import { startShow } from "@/lib/service/follows";
 import { enqueueSeasonGrab } from "@/lib/queue";
 import { getSessionUser } from "@/lib/session";
 
@@ -14,6 +15,7 @@ interface Body {
   seasons?: number[];
   season?: number;
   episode?: number;
+  startSeason?: number; // TV: begin here and auto-advance later seasons by watch progress
 }
 
 /** Direct download from a TMDB title: a movie, or one/more full seasons (packs). */
@@ -50,6 +52,13 @@ export async function POST(req: Request) {
           ? { queued: [`S${b.season}E${b.episode}`], totalQueued: 1 }
           : { queued: [], failed: [b.episode], totalQueued: 0 },
       );
+    }
+
+    // Preferred TV path: start the member at one season and auto-advance from there.
+    if (typeof b.startSeason === "number" && b.startSeason >= 1) {
+      const startSeason = Math.trunc(b.startSeason);
+      await startShow({ tmdbId, title, year: b.year ?? null, startSeason, userId: user.id });
+      return NextResponse.json({ started: true, startSeason, queued: [`Season ${startSeason}`] });
     }
 
     const seasons = Array.isArray(b.seasons) ? b.seasons.filter((n) => Number.isInteger(n) && n > 0) : [];
