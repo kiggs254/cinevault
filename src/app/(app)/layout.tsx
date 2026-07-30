@@ -2,6 +2,7 @@ import { Sidebar, MobileTopBar, MobileBottomNav } from "@/components/sidebar";
 import { DownloadsProvider } from "@/components/downloads-context";
 import { ConfirmProvider } from "@/components/confirm-dialog";
 import { ScrollActivity } from "@/components/scroll-activity";
+import InstallPrompt from "@/components/install-prompt";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -19,6 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </main>
           <MobileBottomNav />
         </div>
+        <InstallPrompt />
       </div>
       </ConfirmProvider>
     </DownloadsProvider>

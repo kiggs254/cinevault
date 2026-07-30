@@ -36,6 +36,10 @@ export const viewport: Viewport = {
 // Runs before paint: applies the saved (or system) theme so there's no flash.
 const THEME_INIT = `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
+// Capture the install event early (Chrome fires it before React mounts) so the
+// in-app "Install" prompt can offer it on demand.
+const BIP_CAPTURE = `(function(){window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__cvBip=e;window.dispatchEvent(new Event('cv-bip'));});})();`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
@@ -46,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+        <script dangerouslySetInnerHTML={{ __html: BIP_CAPTURE }} />
         <PwaRegister />
         <div className="glow" aria-hidden="true" />
         <div className="grain" aria-hidden="true" />
