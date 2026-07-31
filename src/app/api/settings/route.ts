@@ -5,7 +5,8 @@ import { ProwlarrClient } from "@/lib/indexers/prowlarr";
 import { bucketReachable, makeS3 } from "@/lib/storage/s3";
 import { providerFor } from "@/lib/llm/providers";
 import { tgApi, sendMessage } from "@/lib/telegram/client";
-import { setJellyfinRequestLink } from "@/lib/jellyfin/admin";
+import { setJellyfinRequestLink, triggerLibraryScan } from "@/lib/jellyfin/admin";
+import { repairMislabeledMedia } from "@/lib/service/downloads";
 import { getSessionUser, isAdmin } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -116,6 +117,20 @@ export async function POST(req: Request) {
           ok: true,
           message: `Bot @${me.username}${cfg.telegram.chatId ? " — test message sent" : " — now message the bot to link your chat"}`,
         });
+      }
+      case "repairMedia": {
+        const { fixed } = await repairMislabeledMedia();
+        return NextResponse.json({
+          ok: true,
+          message: fixed
+            ? `Fixed ${fixed} mislabeled file(s) + triggered a Jellyfin scan`
+            : "No mislabeled files found",
+        });
+      }
+      case "rescan": {
+        if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) throw new Error("Jellyfin URL + API key required");
+        await triggerLibraryScan(cfg.jellyfin);
+        return NextResponse.json({ ok: true, message: "Jellyfin library scan triggered" });
       }
       case "jellyfinLink": {
         if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) throw new Error("Jellyfin URL + API key required");

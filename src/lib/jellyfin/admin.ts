@@ -180,6 +180,12 @@ function pathOf(url: unknown): string {
   }
 }
 
+/** Kick off a Jellyfin library scan so newly-uploaded files are indexed now
+ *  (rclone mounts don't reliably fire real-time monitoring). Best-effort. */
+export async function triggerLibraryScan(cfg: JellyfinConfig): Promise<void> {
+  await jfetch(cfg, "POST", "/Library/Refresh");
+}
+
 /** Trigger the "Refresh Guide" scheduled task so new channels/EPG show up now. */
 async function refreshGuide(cfg: JellyfinConfig): Promise<void> {
   const tasks = await jfetch(cfg, "GET", "/ScheduledTasks?isHidden=false");

@@ -25,7 +25,8 @@ import {
   retryFailed,
   recordDownloadFailure,
 } from "../lib/service/downloads";
-import { makeS3, uploadContent, uploadStream } from "../lib/storage/s3";
+import { makeS3, uploadContent, uploadStream, mediaSafeName } from "../lib/storage/s3";
+import { triggerLibraryScan } from "../lib/jellyfin/admin";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
@@ -478,7 +479,7 @@ async function streamTorboxToS3(
   for (const f of wanted) {
     const link = await tb.requestDownloadLink(added.torrentId, f.id);
     if (!link) continue;
-    const name = (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_");
+    const name = mediaSafeName((f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_"));
     const key = `${prefix}/${name}`;
     const res = await fetch(link);
     if (!res.ok || !res.body) {
@@ -511,6 +512,17 @@ async function streamTorboxToS3(
   await tb.remove(added.torrentId); // files are in S3 now — free the TorBox slot
   if (!keys.length) return null;
   return { keys, bytes: total, primaryKey };
+}
+
+// Nudge Jellyfin to scan after a completion, at most once a minute (a burst of
+// finished episodes coalesces into one scan; a scan already running is a no-op).
+let lastJellyfinScan = 0;
+async function pokeJellyfinScan(cfg: ResolvedConfig): Promise<void> {
+  if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) return;
+  const now = Date.now();
+  if (now - lastJellyfinScan < 60_000) return;
+  lastJellyfinScan = now;
+  await triggerLibraryScan(cfg.jellyfin).catch(() => {});
 }
 
 async function processDownload(id: string): Promise<void> {
@@ -653,6 +665,7 @@ async function processDownload(id: string): Promise<void> {
     },
   });
   await publishProgress({ type: "status", downloadId: id, status: "COMPLETED", progress: 100 });
+  void pokeJellyfinScan(cfg); // index the new file in Jellyfin promptly
   const seLabel =
     organized.season != null
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`

@@ -12,9 +12,10 @@ import {
   parseRelease,
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
-import { makeS3, deleteObject } from "../storage/s3";
+import { makeS3, deleteObject, renameObject, mediaSafeName } from "../storage/s3";
+import { triggerLibraryScan } from "../jellyfin/admin";
 import { notifyActivity } from "../telegram/client";
-import type { Download } from "@prisma/client";
+import { Prisma, type Download } from "@prisma/client";
 import { enqueueDownload, enqueueEpisodeGrab } from "../queue";
 import {
   failedSourcesFor,
@@ -886,6 +887,64 @@ export async function removeDownload(id: string): Promise<void> {
   await deleteDownloadObjects(row, cfg).catch(() => {});
   await prisma.download.delete({ where: { id } });
   await publishProgress({ type: "deleted", downloadId: id });
+}
+
+/**
+ * One-off repair: fix COMPLETED library files whose S3 key carries a bogus
+ * extension (e.g. a video shipped as ".exe") that Jellyfin silently ignores.
+ * Renames the object(s) in S3 to a media-safe name, updates the row(s), then
+ * pokes a Jellyfin scan so the recovered episodes appear.
+ */
+export async function repairMislabeledMedia(): Promise<{ fixed: number }> {
+  const cfg = await getConfig();
+  if (!cfg.s3.endpoint || !cfg.s3.bucket) return { fixed: 0 };
+  const rows = await prisma.download.findMany({
+    where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null },
+    select: { id: true, s3Key: true, s3Bucket: true, metadata: true, title: true },
+  });
+  const s3 = makeS3(cfg.s3);
+  let fixed = 0;
+  for (const r of rows) {
+    if (!r.s3Key) continue;
+    const bucket = r.s3Bucket ?? cfg.s3.bucket;
+    if (!bucket) continue;
+    const meta =
+      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+        ? (r.metadata as Record<string, unknown>)
+        : {};
+    const storedKeys = Array.isArray(meta.s3Keys)
+      ? (meta.s3Keys as unknown[]).filter((k): k is string => typeof k === "string")
+      : [];
+    const allKeys = storedKeys.length ? storedKeys : [r.s3Key];
+    // Rename basename only; keep the folder path.
+    const map = new Map<string, string>();
+    for (const k of allKeys) {
+      const parts = k.split("/");
+      const safe = mediaSafeName(parts[parts.length - 1]);
+      if (safe !== parts[parts.length - 1]) {
+        parts[parts.length - 1] = safe;
+        map.set(k, parts.join("/"));
+      }
+    }
+    if (map.size === 0) continue;
+    try {
+      for (const [from, to] of map) await renameObject(s3, bucket, from, to);
+    } catch (e) {
+      console.error("[repair] rename failed:", r.title, (e as Error).message);
+      continue;
+    }
+    const newKeys = allKeys.map((k) => map.get(k) ?? k);
+    await prisma.download.update({
+      where: { id: r.id },
+      data: {
+        s3Key: map.get(r.s3Key) ?? r.s3Key,
+        metadata: { ...meta, s3Keys: newKeys } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    fixed++;
+  }
+  if (fixed) await triggerLibraryScan(cfg.jellyfin).catch(() => {});
+  return { fixed };
 }
 
 function metaRecord(metadata: unknown): Record<string, unknown> {

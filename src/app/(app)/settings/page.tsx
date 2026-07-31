@@ -358,35 +358,36 @@ export default function SettingsPage() {
                         Test
                       </button>
                       {section.test === "jellyfin" &&
-                        (() => {
-                          const tl = tests["jellyfinLink"];
+                        (
+                          [
+                            { key: "repairMedia", label: "Fix missing episodes" },
+                            { key: "rescan", label: "Rescan library" },
+                            { key: "jellyfinLink", label: "Add request link" },
+                          ] as const
+                        ).map((a) => {
+                          const ta = tests[a.key];
                           return (
-                            <>
-                              {tl && !tl.busy && (
+                            <span key={a.key} className="flex items-center gap-1.5">
+                              {ta && !ta.busy && (
                                 <span
                                   className="flex items-center gap-1 text-xs"
-                                  style={{ color: tl.ok ? "var(--color-success)" : "var(--color-danger)" }}
+                                  style={{ color: ta.ok ? "var(--color-success)" : "var(--color-danger)" }}
                                 >
-                                  {tl.ok ? <Check size={13} /> : <X size={13} />}
-                                  <span className="max-w-[10rem] truncate">{tl.msg}</span>
+                                  {ta.ok ? <Check size={13} /> : <X size={13} />}
+                                  <span className="max-w-[9rem] truncate">{ta.msg}</span>
                                 </span>
                               )}
                               <button
                                 className="btn btn-ghost"
-                                onClick={() => runTest("jellyfinLink")}
-                                disabled={tl?.busy}
-                                title="Adds a “Request on Cinevault” link to your Jellyfin login screen (shows on every device)"
+                                onClick={() => runTest(a.key)}
+                                disabled={ta?.busy}
                               >
-                                {tl?.busy ? (
-                                  <Loader2 size={14} className="animate-spin" />
-                                ) : (
-                                  <Link2 size={14} />
-                                )}
-                                Add request link
+                                {ta?.busy ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                                {a.label}
                               </button>
-                            </>
+                            </span>
                           );
-                        })()}
+                        })}
                     </div>
                   )}
                 </div>

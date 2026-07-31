@@ -2,6 +2,7 @@ import {
   S3Client,
   ListObjectsV2Command,
   DeleteObjectCommand,
+  CopyObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
@@ -103,7 +104,10 @@ export async function uploadContent(opts: {
   let primarySize = -1;
 
   for (const f of files) {
-    const key = `${prefix}/${f.rel}`;
+    // Coerce a bogus extension (e.g. a video shipped as .exe) on the filename only.
+    const seg = f.rel.split("/");
+    seg[seg.length - 1] = mediaSafeName(seg[seg.length - 1]);
+    const key = `${prefix}/${seg.join("/")}`;
     let fileLoaded = 0;
     const upload = new Upload({
       client: opts.s3,
@@ -216,6 +220,35 @@ export async function deleteObject(
   key: string,
 ): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+/** Rename an object in place (server-side copy + delete). No-op if from === to. */
+export async function renameObject(
+  s3: S3Client,
+  bucket: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  if (from === to) return;
+  await s3.send(
+    new CopyObjectCommand({ Bucket: bucket, CopySource: `${bucket}/${encodeURI(from)}`, Key: to }),
+  );
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: from }));
+}
+
+/** Media/subtitle extensions Jellyfin will actually index. */
+const MEDIA_EXT = /\.(mkv|mp4|m4v|avi|mov|ts|m2ts|webm|mpg|mpeg|wmv|flv|3gp|ogv|srt|ass|ssa|sub|idx|vtt)$/i;
+
+/**
+ * Ensure a filename carries an extension Jellyfin recognises. Scene releases
+ * sometimes ship the video with a bogus/executable extension (e.g. ".exe") that
+ * Jellyfin silently ignores; coerce those to ".mkv" (ffprobe still identifies the
+ * real container on play). Recognised media/subtitle files are left untouched.
+ */
+export function mediaSafeName(name: string): string {
+  const trimmed = name.trim();
+  if (MEDIA_EXT.test(trimmed)) return trimmed;
+  return trimmed.replace(/\s*\.[^.\s/\\]{1,5}$/i, "").trimEnd() + ".mkv";
 }
 
 export async function bucketReachable(
