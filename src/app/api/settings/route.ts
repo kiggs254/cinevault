@@ -119,12 +119,15 @@ export async function POST(req: Request) {
         });
       }
       case "repairMedia": {
-        const { fixed } = await repairMislabeledMedia();
+        const { fixed, removed } = await repairMislabeledMedia();
+        const parts: string[] = [];
+        if (fixed) parts.push(`renamed ${fixed} video(s)`);
+        if (removed) parts.push(`removed ${removed} junk file(s)`);
         return NextResponse.json({
           ok: true,
-          message: fixed
-            ? `Fixed ${fixed} mislabeled file(s) + triggered a Jellyfin scan`
-            : "No mislabeled files found",
+          message: parts.length
+            ? `${parts.join(" + ")} + triggered a Jellyfin scan`
+            : "Library looks clean — nothing to fix",
         });
       }
       case "rescan": {

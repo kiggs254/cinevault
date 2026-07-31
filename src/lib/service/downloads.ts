@@ -12,7 +12,7 @@ import {
   parseRelease,
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
-import { makeS3, deleteObject, renameObject, mediaSafeName } from "../storage/s3";
+import { makeS3, deleteObject, renameObject, headObjectSize, classifyStoredFile } from "../storage/s3";
 import { triggerLibraryScan } from "../jellyfin/admin";
 import { notifyActivity } from "../telegram/client";
 import { Prisma, type Download } from "@prisma/client";
@@ -890,20 +890,25 @@ export async function removeDownload(id: string): Promise<void> {
 }
 
 /**
- * One-off repair: fix COMPLETED library files whose S3 key carries a bogus
- * extension (e.g. a video shipped as ".exe") that Jellyfin silently ignores.
- * Renames the object(s) in S3 to a media-safe name, updates the row(s), then
- * pokes a Jellyfin scan so the recovered episodes appear.
+ * One-off repair of the S3 objects behind COMPLETED downloads, using each file's
+ * real byte size (HEAD):
+ *  - deletes promo/junk (torrent ads, tiny "sample" clips, and files a previous
+ *    bug renamed to ".mkv" that are far too small to be a feature);
+ *  - renames a genuine video hiding behind a bogus extension (e.g. ".exe") to
+ *    ".mkv" so Jellyfin indexes it;
+ *  - repoints each row's primary key to its largest surviving file.
+ * Then pokes a Jellyfin scan so phantom items disappear and real ones appear.
  */
-export async function repairMislabeledMedia(): Promise<{ fixed: number }> {
+export async function repairMislabeledMedia(): Promise<{ fixed: number; removed: number }> {
   const cfg = await getConfig();
-  if (!cfg.s3.endpoint || !cfg.s3.bucket) return { fixed: 0 };
+  if (!cfg.s3.endpoint || !cfg.s3.bucket) return { fixed: 0, removed: 0 };
   const rows = await prisma.download.findMany({
     where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null },
     select: { id: true, s3Key: true, s3Bucket: true, metadata: true, title: true },
   });
   const s3 = makeS3(cfg.s3);
   let fixed = 0;
+  let removed = 0;
   for (const r of rows) {
     if (!r.s3Key) continue;
     const bucket = r.s3Bucket ?? cfg.s3.bucket;
@@ -916,35 +921,52 @@ export async function repairMislabeledMedia(): Promise<{ fixed: number }> {
       ? (meta.s3Keys as unknown[]).filter((k): k is string => typeof k === "string")
       : [];
     const allKeys = storedKeys.length ? storedKeys : [r.s3Key];
-    // Rename basename only; keep the folder path.
-    const map = new Map<string, string>();
+
+    const keep: string[] = [];
+    let primary = r.s3Key;
+    let bestSize = -1;
+    let changed = false;
     for (const k of allKeys) {
-      const parts = k.split("/");
-      const safe = mediaSafeName(parts[parts.length - 1]);
-      if (safe !== parts[parts.length - 1]) {
-        parts[parts.length - 1] = safe;
-        map.set(k, parts.join("/"));
+      const size = await headObjectSize(s3, bucket, k);
+      if (size == null) {
+        keep.push(k); // can't measure → leave it alone
+        continue;
+      }
+      const verdict = classifyStoredFile(k.split("/").pop() ?? "", size);
+      if (verdict === "delete") {
+        await deleteObject(s3, bucket, k).catch(() => {});
+        removed++;
+        changed = true;
+      } else if (verdict === "keep") {
+        keep.push(k);
+        if (size > bestSize) [bestSize, primary] = [size, k];
+      } else {
+        const parts = k.split("/");
+        parts[parts.length - 1] = verdict.rename;
+        const to = parts.join("/");
+        try {
+          await renameObject(s3, bucket, k, to);
+          keep.push(to);
+          if (size > bestSize) [bestSize, primary] = [size, to];
+          fixed++;
+          changed = true;
+        } catch {
+          keep.push(k);
+        }
       }
     }
-    if (map.size === 0) continue;
-    try {
-      for (const [from, to] of map) await renameObject(s3, bucket, from, to);
-    } catch (e) {
-      console.error("[repair] rename failed:", r.title, (e as Error).message);
-      continue;
-    }
-    const newKeys = allKeys.map((k) => map.get(k) ?? k);
+    if (!changed) continue;
+    if (!keep.includes(primary)) primary = keep[0] ?? r.s3Key;
     await prisma.download.update({
       where: { id: r.id },
       data: {
-        s3Key: map.get(r.s3Key) ?? r.s3Key,
-        metadata: { ...meta, s3Keys: newKeys } as unknown as Prisma.InputJsonValue,
+        s3Key: primary,
+        metadata: { ...meta, s3Keys: keep } as unknown as Prisma.InputJsonValue,
       },
     });
-    fixed++;
   }
-  if (fixed) await triggerLibraryScan(cfg.jellyfin).catch(() => {});
-  return { fixed };
+  if (fixed || removed) await triggerLibraryScan(cfg.jellyfin).catch(() => {});
+  return { fixed, removed };
 }
 
 function metaRecord(metadata: unknown): Record<string, unknown> {

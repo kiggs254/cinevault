@@ -25,7 +25,7 @@ import {
   retryFailed,
   recordDownloadFailure,
 } from "../lib/service/downloads";
-import { makeS3, uploadContent, uploadStream, mediaSafeName } from "../lib/storage/s3";
+import { makeS3, uploadContent, uploadStream, classifyUploadName } from "../lib/storage/s3";
 import { triggerLibraryScan } from "../lib/jellyfin/admin";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -468,18 +468,29 @@ async function streamTorboxToS3(
     kind: "upload",
     title: dl.title,
   });
-  const junk = /(\.torrent|\.parts|\.aria2|thumbs\.db|\.ds_store)$/i;
   const prefix = dest.keyPrefix.replace(/^\/+|\/+$/g, "");
-  const wanted = info.files.filter((f) => !junk.test(f.name));
-  const total = wanted.reduce((a, f) => a + (f.size || 0), 0);
+  // Keep only real media (drop promo/junk; coerce a bogus video extension); a
+  // large file behind a ".exe" is the video, a tiny ".jpg/.txt" is a torrent ad.
+  const accepted: { f: (typeof info.files)[number]; name: string }[] = [];
+  for (const f of info.files) {
+    const n = classifyUploadName(
+      (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_"),
+      f.size || 0,
+    );
+    if (n) accepted.push({ f, name: n });
+  }
+  if (accepted.length === 0) {
+    await tb.remove(added.torrentId);
+    return null; // nothing but junk — fall back to qBittorrent
+  }
+  const total = accepted.reduce((a, x) => a + (x.f.size || 0), 0);
   let doneBytes = 0;
   const keys: string[] = [];
   let primaryKey = "";
   let primarySize = -1;
-  for (const f of wanted) {
+  for (const { f, name } of accepted) {
     const link = await tb.requestDownloadLink(added.torrentId, f.id);
     if (!link) continue;
-    const name = mediaSafeName((f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_"));
     const key = `${prefix}/${name}`;
     const res = await fetch(link);
     if (!res.ok || !res.body) {

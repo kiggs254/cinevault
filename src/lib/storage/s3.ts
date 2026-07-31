@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
   CopyObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
@@ -91,22 +92,23 @@ export async function uploadContent(opts: {
   keyPrefix: string;
   onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }): Promise<{ keys: string[]; bytes: number; primaryKey: string }> {
-  const junk = /(\.torrent|\.parts|\.aria2|thumbs\.db|\.ds_store)$/i;
-  const files = (await collectFiles(opts.contentPath)).filter(
-    (f) => !junk.test(f.rel),
-  );
-  const total = files.reduce((a, f) => a + f.size, 0);
+  const files = await collectFiles(opts.contentPath);
   const prefix = opts.keyPrefix.replace(/^\/+|\/+$/g, "");
+
+  // Only upload real media; drop promo/junk and coerce bogus video extensions.
+  const uploadable = files
+    .map((f) => ({ f, name: classifyUploadName(f.rel.split("/").pop() ?? "", f.size) }))
+    .filter((x): x is { f: (typeof files)[number]; name: string } => x.name !== null);
+  const uploadTotal = uploadable.reduce((a, x) => a + x.f.size, 0);
 
   let doneBytes = 0;
   const keys: string[] = [];
   let primaryKey = "";
   let primarySize = -1;
 
-  for (const f of files) {
-    // Coerce a bogus extension (e.g. a video shipped as .exe) on the filename only.
+  for (const { f, name } of uploadable) {
     const seg = f.rel.split("/");
-    seg[seg.length - 1] = mediaSafeName(seg[seg.length - 1]);
+    seg[seg.length - 1] = name;
     const key = `${prefix}/${seg.join("/")}`;
     let fileLoaded = 0;
     const upload = new Upload({
@@ -124,7 +126,7 @@ export async function uploadContent(opts: {
       const loaded = p.loaded ?? 0;
       doneBytes += loaded - fileLoaded;
       fileLoaded = loaded;
-      opts.onProgress?.(doneBytes, total);
+      opts.onProgress?.(doneBytes, uploadTotal);
     });
     await upload.done();
     keys.push(key);
@@ -133,7 +135,7 @@ export async function uploadContent(opts: {
       primaryKey = key;
     }
   }
-  return { keys, bytes: total, primaryKey };
+  return { keys, bytes: uploadTotal, primaryKey };
 }
 
 /**
@@ -222,6 +224,20 @@ export async function deleteObject(
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
+/** Object size in bytes (HEAD), or null if it doesn't exist / can't be read. */
+export async function headObjectSize(
+  s3: S3Client,
+  bucket: string,
+  key: string,
+): Promise<number | null> {
+  try {
+    const r = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return typeof r.ContentLength === "number" ? r.ContentLength : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Rename an object in place (server-side copy + delete). No-op if from === to. */
 export async function renameObject(
   s3: S3Client,
@@ -236,19 +252,54 @@ export async function renameObject(
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: from }));
 }
 
-/** Media/subtitle extensions Jellyfin will actually index. */
-const MEDIA_EXT = /\.(mkv|mp4|m4v|avi|mov|ts|m2ts|webm|mpg|mpeg|wmv|flv|3gp|ogv|srt|ass|ssa|sub|idx|vtt)$/i;
+/** Video containers Jellyfin indexes as movies/episodes. */
+const VIDEO_EXT = /\.(mkv|mp4|m4v|avi|mov|ts|m2ts|webm|mpg|mpeg|wmv|flv|3gp|ogv)$/i;
+/** Subtitle sidecars Jellyfin picks up (kept regardless of size). */
+const SUBTITLE_EXT = /\.(srt|ass|ssa|sub|idx|vtt)$/i;
+/** Obvious junk bundled in torrents — never worth storing. */
+const JUNK_EXT = /\.(txt|nfo|jpg|jpeg|png|gif|webp|bmp|url|html?|md|sfv|diz|srr|par2|rar|zip|7z|ini|db|torrent|parts|aria2)$/i;
+/** Below this a "video" is really a promo/sample clip, not the feature. */
+const MIN_VIDEO_BYTES = 20 * 1024 * 1024;
 
-/**
- * Ensure a filename carries an extension Jellyfin recognises. Scene releases
- * sometimes ship the video with a bogus/executable extension (e.g. ".exe") that
- * Jellyfin silently ignores; coerce those to ".mkv" (ffprobe still identifies the
- * real container on play). Recognised media/subtitle files are left untouched.
- */
+const isMedia = (name: string) => VIDEO_EXT.test(name) || SUBTITLE_EXT.test(name);
+
+/** Coerce a bogus/executable/missing extension to ".mkv" (leaves media as-is). */
 export function mediaSafeName(name: string): string {
   const trimmed = name.trim();
-  if (MEDIA_EXT.test(trimmed)) return trimmed;
+  if (isMedia(trimmed)) return trimmed;
   return trimmed.replace(/\s*\.[^.\s/\\]{1,5}$/i, "").trimEnd() + ".mkv";
+}
+
+/**
+ * Decide how a torrent file should be stored, so Jellyfin only ever sees real
+ * media. Returns the S3-safe filename, or `null` to skip the file entirely.
+ *  - real media/subtitles → kept as-is;
+ *  - a LARGE file with a bogus/executable/missing extension (scene releases hide
+ *    the video behind ".exe" etc.) → coerced to ".mkv";
+ *  - everything else (promo .txt/.jpg, tiny "sample" clips, archives) → skipped.
+ */
+export function classifyUploadName(name: string, sizeBytes: number): string | null {
+  const base = name.trim();
+  if (isMedia(base)) return base;
+  if (JUNK_EXT.test(base)) return null;
+  if (sizeBytes >= MIN_VIDEO_BYTES) return mediaSafeName(base);
+  return null;
+}
+
+/**
+ * Verdict for an ALREADY-stored object (used by the repair sweep, which knows the
+ * real byte size from a HEAD). Catches promo files that a previous bug coerced to
+ * ".mkv" — they carry a video extension but are far too small to be a feature.
+ */
+export function classifyStoredFile(
+  name: string,
+  sizeBytes: number,
+): "keep" | "delete" | { rename: string } {
+  const base = name.trim();
+  if (SUBTITLE_EXT.test(base)) return "keep";
+  if (VIDEO_EXT.test(base)) return sizeBytes < MIN_VIDEO_BYTES ? "delete" : "keep";
+  if (JUNK_EXT.test(base)) return "delete";
+  return sizeBytes >= MIN_VIDEO_BYTES ? { rename: mediaSafeName(base) } : "delete";
 }
 
 export async function bucketReachable(
