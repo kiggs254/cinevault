@@ -695,6 +695,54 @@ async function processDownload(id: string): Promise<void> {
     title: organized.cleanTitle,
   });
 
+  // Fan this ONE file out to any waiters (other members who rode along on this
+  // download instead of starting their own) — they all share the same S3 object,
+  // so Jellyfin holds a single copy.
+  if (dl.tmdbId) {
+    const waiters = await prisma.download.findMany({
+      where: {
+        id: { not: id },
+        tmdbId: dl.tmdbId,
+        kind: organized.kind,
+        season: organized.season ?? dl.season,
+        episode: organized.episode ?? dl.episode,
+        status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] },
+        s3Key: null,
+      },
+      select: { id: true, userId: true },
+    });
+    if (waiters.length) {
+      await prisma.download.updateMany({
+        where: { id: { in: waiters.map((w) => w.id) } },
+        data: {
+          status: "COMPLETED",
+          progress: 100,
+          s3Bucket: cfg.s3.bucket,
+          s3Key: primaryKey,
+          s3Prefix: organized.s3Prefix,
+          metadata: { s3Keys: keys },
+          kind: organized.kind,
+          title: organized.cleanTitle,
+          year: organized.year ?? dl.year,
+          season: organized.season ?? dl.season,
+          episode: organized.episode ?? dl.episode,
+          posterUrl: meta?.posterUrl ?? dl.posterUrl,
+          overview: meta?.overview ?? dl.overview,
+          tmdbId: meta?.tmdbId ?? dl.tmdbId,
+          sizeBytes: BigInt(Math.max(0, Math.round(bytes || Number(dl.sizeBytes)))),
+          completedAt: new Date(),
+        },
+      });
+      for (const w of waiters) {
+        await publishProgress({ type: "status", downloadId: w.id, status: "COMPLETED", progress: 100 });
+        await notifyActivity(w.userId, `🍿 Ready to watch\n${organized.cleanTitle}${seLabel}`, {
+          photo: meta?.posterUrl ?? dl.posterUrl ?? undefined,
+          buttons: [{ text: "▶️ Open your library", path: "/library" }],
+        }).catch(() => {});
+      }
+    }
+  }
+
   if (qb) await dedupeCompletedEpisode(qb, id);
   await cleanup();
 }
@@ -762,6 +810,30 @@ const worker = new Worker<DownloadJobData>(
       await publishProgress({ type: "status", downloadId, status: "FAILED", message });
       // Remember this source failed so no future grab re-picks it (survives deletion).
       await recordDownloadFailure(downloadId).catch(() => {});
+      // Free any waiters that were riding on this now-failed download so the next
+      // scan re-attempts for those members instead of leaving them stuck.
+      try {
+        const f = await prisma.download.findUnique({
+          where: { id: downloadId },
+          select: { tmdbId: true, kind: true, season: true, episode: true },
+        });
+        if (f?.tmdbId) {
+          await prisma.download.deleteMany({
+            where: {
+              tmdbId: f.tmdbId,
+              kind: f.kind,
+              season: f.season,
+              episode: f.episode,
+              status: "QUEUED",
+              s3Key: null,
+              magnet: null,
+              qbitHash: null,
+            },
+          });
+        }
+      } catch {
+        /* best-effort */
+      }
       // Remove the dead torrent from qBittorrent so its state matches the app.
       try {
         const row = await prisma.download.findUnique({
@@ -855,10 +927,13 @@ const grabWorker = new Worker<DownloadJobData>(
  */
 async function recoverInterrupted(): Promise<void> {
   try {
-    const stuck = await prisma.download.findMany({
+    const rows = await prisma.download.findMany({
       where: { status: { in: ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"] } },
-      select: { id: true },
+      select: { id: true, magnet: true, qbitHash: true },
     });
+    // Skip source-less "waiter" rows — they ride on another member's download and
+    // are filled by the completion fan-out, never by a torrent of their own.
+    const stuck = rows.filter((r) => r.magnet || r.qbitHash);
     for (const d of stuck) await enqueueDownload(d.id);
     if (stuck.length) {
       console.log(`[worker] re-queued ${stuck.length} interrupted download(s) after restart`);

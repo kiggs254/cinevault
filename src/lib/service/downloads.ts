@@ -444,9 +444,48 @@ async function cloneCompletedTwin(
     },
     orderBy: { completedAt: "desc" },
   });
-  if (!twin) return null;
-  const clone = await cloneAsOwned(twin, userId);
-  return toDTO(clone);
+  if (twin) return toDTO(await cloneAsOwned(twin, userId));
+
+  // No completed copy yet — but if another member is ALREADY downloading this
+  // exact item, ride along instead of starting a second torrent (that produced
+  // duplicates in Jellyfin). A source-less "waiter" row (no magnet/qbitHash, so
+  // it can never download) is filled from the shared file when the in-flight
+  // download completes — see the fan-out in the worker's completion handler.
+  const active = await prisma.download.findFirst({
+    where: {
+      tmdbId: sel.tmdbId,
+      season,
+      episode,
+      kind: sel.kind,
+      s3DeletedAt: null,
+      status: { in: ["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"] },
+      OR: [{ magnet: { not: null } }, { qbitHash: { not: null } }], // a real download, not another waiter
+      NOT: { userId },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (active) {
+    const waiter = await prisma.download.create({
+      data: {
+        title: active.title,
+        releaseName: active.releaseName,
+        kind: active.kind,
+        year: active.year,
+        season: active.season,
+        episode: active.episode,
+        tmdbId: active.tmdbId,
+        userId,
+        posterUrl: active.posterUrl,
+        overview: active.overview,
+        status: "QUEUED",
+        progress: active.progress,
+        metadata: { waitingFor: active.id },
+      },
+    });
+    await publishProgress({ type: "created", downloadId: waiter.id, status: "QUEUED" });
+    return toDTO(waiter);
+  }
+  return null;
 }
 
 /** Clone a COMPLETED download into a member's library (same shared S3 object). */
