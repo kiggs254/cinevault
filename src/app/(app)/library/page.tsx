@@ -7,6 +7,7 @@ import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
 import { useConfirm } from "@/components/confirm-dialog";
+import { useLiveRefresh } from "@/components/use-live-refresh";
 
 interface Item {
   id: string;
@@ -128,14 +129,13 @@ export default function LibraryPage() {
     void load();
   }, [load]);
 
-  // While anything is still being added, refresh (silently) so progress advances
-  // and newly ready titles appear without a manual reload — no flicker.
+  // Keep the grid live while the screen is open: refetch the moment the tab is
+  // foregrounded / focused / back online, plus a light poll while anything is
+  // still being added — so progress advances and completions land on their own,
+  // even after the PWA was backgrounded (which pauses timers). No flicker: these
+  // are all `silent` loads.
   const anyDownloading = titles.some((t) => t.downloading);
-  useEffect(() => {
-    if (!anyDownloading) return;
-    const t = setInterval(() => void load(true), 8000);
-    return () => clearInterval(t);
-  }, [anyDownloading, load]);
+  useLiveRefresh(() => void load(true), { active: anyDownloading, intervalMs: 5000 });
 
   async function open(key: string) {
     try {

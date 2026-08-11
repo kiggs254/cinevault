@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { jsonFetch } from "@/lib/client";
+import { useLiveRefresh } from "./use-live-refresh";
 import type { DownloadDTO, ActivityEntry } from "@/lib/types";
 
 interface ProgressMsg {
@@ -42,7 +43,13 @@ export function useDownloads() {
       .catch(() => {});
     const es = new EventSource("/api/events");
     esRef.current = es;
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      setConnected(true);
+      // Re-sync on every (re)connect: EventSource auto-reconnects after a drop
+      // (mobile backgrounding, proxy timeout), but events sent while it was down
+      // are gone — without this the bar freezes at the last-seen %.
+      void refetch();
+    };
     es.onerror = () => setConnected(false);
     es.onmessage = (ev) => {
       let e: ProgressMsg;
@@ -118,6 +125,14 @@ export function useDownloads() {
     },
     [refetch],
   );
+
+  // Belt-and-suspenders liveness on top of SSE: re-sync on foreground / focus /
+  // reconnect, and poll lightly while work is in flight — so the app is always
+  // live while open even if the stream stalls.
+  const hasActive = downloads.some((d) =>
+    (["QUEUED", "SEARCHING", "DOWNLOADING", "UPLOADING"] as DownloadDTO["status"][]).includes(d.status),
+  );
+  useLiveRefresh(refetch, { active: hasActive, intervalMs: 5000 });
 
   return { downloads, activity, connected, loaded, refetch, remove, retry, resource };
 }
