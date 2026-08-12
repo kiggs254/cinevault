@@ -30,8 +30,8 @@ export const GUIDELINES: { t: string; d: string }[] = [
     d: "Your login is yours alone. Only one stream can play at a time; sharing your account or streaming on multiple screens will flag it and may get you removed.",
   },
   {
-    t: "For shows, add only the season(s) you'll actually watch.",
-    d: "Storage is shared. Don't bulk-add a whole series “just in case” — pick the season you're watching now; add the next one when you get there.",
+    t: "For shows, add one season — the rest follow as you watch.",
+    d: "Add a single season to start: from the beginning or jump in at any season. As you near the end of it, the next season is added for you automatically — so there's no need to grab a whole series at once. Storage is shared.",
   },
   {
     t: "Finished watching? Delete it from your library.",
