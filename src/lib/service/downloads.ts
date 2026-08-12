@@ -394,6 +394,16 @@ export async function grabSingleEpisode(opts: {
 const DAY = 24 * 60 * 60 * 1000;
 const YEAR = 365 * DAY;
 
+/**
+ * Hold-off before auto-grabbing a freshly-aired episode. TMDB air dates are
+ * date-only (anchored at midnight UTC) and shows air in the evening, so a mere
+ * +24h lands right at real broadcast time — when only unplayable early junk
+ * (cam/telesync, mislabeled or partial releases) is on the indexers. Waiting
+ * ~36h (≈ noon the day after it airs) lets a proper playable WEB/HDTV release
+ * appear first. Episodes that aired long ago are unaffected.
+ */
+export const EPISODE_AVAILABLE_DELAY = 36 * 60 * 60 * 1000;
+
 export interface SeasonGrabResult {
   season: number;
   mode: "pack" | "episodes";
@@ -706,7 +716,7 @@ export async function grabSeason(opts: {
   if (!cfg.tmdb.apiKey) return { ...base, reason: "TMDB not configured" };
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
   const now = Date.now();
-  const availableCutoff = now - DAY; // available the day after airing
+  const availableCutoff = now - EPISODE_AVAILABLE_DELAY; // wait for a playable release, not air-time junk
 
   const eps = await getSeasonEpisodes(cfg.tmdb.apiKey, opts.tmdbId, opts.season);
   let available = eps.filter(

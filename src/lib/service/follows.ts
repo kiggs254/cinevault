@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { ProwlarrClient } from "../indexers/prowlarr";
-import { grabEpisode, ownedEpisodeKeys, removeDownload } from "./downloads";
+import { grabEpisode, ownedEpisodeKeys, removeDownload, EPISODE_AVAILABLE_DELAY } from "./downloads";
 import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { enqueueSeasonGrab } from "../queue";
@@ -255,7 +255,7 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
   const shows = await prisma.followedShow.findMany({ where: { autoDownload: true } });
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
   const now = Date.now();
-  const availableCutoff = now - 1 * DAY; // available the day after airing
+  const availableCutoff = now - EPISODE_AVAILABLE_DELAY; // wait for a playable release, not air-time junk
   let grabbed = 0;
 
   for (const show of shows) {
