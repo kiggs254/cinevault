@@ -5,7 +5,7 @@ import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
 import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
 import { scanWatches } from "../lib/service/watches";
-import { scanFollowedShows, autoFollowFromJellyfin, advanceSeasons } from "../lib/service/follows";
+import { scanFollowedShows, autoFollowFromJellyfin, advanceSeasons, backfillIncompleteSeasons } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
 import { scanWantedMovies } from "../lib/service/wanted";
 import { ensureBootstrapAdmin } from "../lib/service/users";
@@ -787,6 +787,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   "watch-scan": scanWatches,
   "follow-scan": scanFollowedShows,
   "season-progress": advanceSeasons,
+  "season-backfill": backfillIncompleteSeasons,
   "reco-refresh": refreshRecommendations,
   "auto-follow": autoFollowFromJellyfin,
   "wanted-scan": scanWantedMovies,

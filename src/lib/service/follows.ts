@@ -5,6 +5,7 @@ import { grabEpisode, ownedEpisodeKeys, removeDownload, EPISODE_AVAILABLE_DELAY 
 import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { enqueueSeasonGrab } from "../queue";
+import { makeS3, listObjects } from "../storage/s3";
 import { getWatchingSeries, getWatchedEpisodes, jellyfinReady } from "../jellyfin/client";
 import type { FollowedShow } from "@prisma/client";
 
@@ -313,4 +314,110 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
     }
   }
   return { checked: shows.length, grabbed };
+}
+
+/** Pull the episode number(s) out of a release filename (handles S02E07E08). */
+const EP_RE = /s(\d{1,2})e(\d{1,2})(?:e(\d{1,2}))?/i;
+
+/**
+ * Season packs are frequently mislabeled or partial — a "COMPLETE" torrent that
+ * really only holds a few episodes — so a whole-season download can land with
+ * gaps that Jellyfin then correctly shows as missing episodes. Sweep every held
+ * season, compare the episode files ACTUALLY in S3 against TMDB's aired episodes,
+ * and grab any that are missing, individually, so the season fills itself in.
+ */
+export async function backfillIncompleteSeasons(): Promise<{ checked: number; grabbed: number }> {
+  const cfg = await getConfig();
+  if (!cfg.tmdb.apiKey || !cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { checked: 0, grabbed: 0 };
+  if (cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
+  if (!cfg.s3.bucket) return { checked: 0, grabbed: 0 };
+
+  const rows = await prisma.download.findMany({
+    where: {
+      kind: "TV", status: "COMPLETED", s3DeletedAt: null,
+      tmdbId: { not: null }, season: { not: null }, s3Key: { not: null },
+    },
+    select: { tmdbId: true, season: true, title: true, year: true, userId: true, s3Key: true, episode: true },
+    orderBy: { createdAt: "desc" },
+  });
+  // One representative row per (tmdbId, season); prefer a pack row for the folder path.
+  const reps = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const k = `${r.tmdbId}:${r.season}`;
+    const cur = reps.get(k);
+    if (!cur || (r.episode == null && cur.episode != null)) reps.set(k, r);
+  }
+
+  const now = Date.now();
+  const availableCutoff = now - EPISODE_AVAILABLE_DELAY;
+  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const s3 = makeS3(cfg.s3);
+  let checked = 0;
+  let grabbed = 0;
+
+  for (const rep of reps.values()) {
+    if (grabbed >= 24) break; // bound the work per sweep
+    const tmdbId = rep.tmdbId as number;
+    const season = rep.season as number;
+    try {
+      const eps = await getSeasonEpisodes(cfg.tmdb.apiKey, tmdbId, season);
+      // Only episodes that have aired AND had time for a playable release.
+      const expected = eps.filter(
+        (e) =>
+          e.episodeNumber >= 1 &&
+          !!e.airDate &&
+          new Date(`${e.airDate}T00:00:00Z`).getTime() <= availableCutoff,
+      );
+      if (expected.length === 0) continue;
+      checked++;
+
+      // What we actually have: episode numbers whose files sit in the S3 season
+      // folder, plus any episode already queued/downloading (don't double-grab).
+      const prefix = (rep.s3Key as string).replace(/\/[^/]*$/, "/");
+      const present = new Set<number>();
+      for (const en of await listObjects(s3, cfg.s3.bucket, prefix)) {
+        if (en.isFolder) continue;
+        const m = EP_RE.exec(en.key.split("/").pop() ?? "");
+        if (m) {
+          present.add(Number(m[2]));
+          if (m[3]) present.add(Number(m[3]));
+        }
+      }
+      const inFlight = await prisma.download.findMany({
+        where: { tmdbId, season, episode: { not: null }, status: { notIn: ["FAILED", "CANCELLED"] } },
+        select: { episode: true },
+      });
+      for (const r of inFlight) if (r.episode != null) present.add(r.episode);
+
+      const missing = expected.filter((e) => !present.has(e.episodeNumber));
+      if (missing.length === 0) continue;
+
+      let filled = 0;
+      for (const ep of missing) {
+        if (grabbed >= 24) break;
+        const ok = await grabEpisode({
+          prowlarr,
+          cfg,
+          show: { title: rep.title, year: rep.year, tmdbId },
+          ep,
+          indexerIds: cfg.profile.legalIndexerIds,
+          notify: false,
+          userId: rep.userId,
+        });
+        if (ok) {
+          grabbed++;
+          filled++;
+        }
+      }
+      if (filled > 0 && rep.userId) {
+        await notifyUser(
+          rep.userId,
+          `🧩 “${rep.title}” Season ${season} was missing ${filled} episode(s) — grabbing them now.`,
+        ).catch(() => {});
+      }
+    } catch (e) {
+      console.error("[backfill] season check failed:", rep.title, season, (e as Error).message);
+    }
+  }
+  return { checked, grabbed };
 }
