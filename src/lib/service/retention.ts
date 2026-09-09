@@ -5,8 +5,6 @@ import { jellyfinReady, getWatchedEpisodes, getPlayedTitles } from "../jellyfin/
 import { makeS3, deleteObject } from "../storage/s3";
 import { notify } from "../telegram/client";
 
-const DAY = 24 * 60 * 60 * 1000;
-
 /**
  * Mark downloads as watched using Jellyfin play state. Only episode-level and
  * movie downloads are matched — season packs are intentionally left alone so
@@ -85,87 +83,88 @@ async function watchedSignals(cfg: Awaited<ReturnType<typeof getConfig>>): Promi
   return { seasons, movies };
 }
 
+const GB = 1024 * 1024 * 1024;
+
 /**
- * Storage lifecycle sweep (daily):
- *  - `autoDeleteWatched`: free WATCHED items older than `days`.
- *  - `autoDeleteIdle`: free items NObody has watched within `idleDays` of adding
- *    (movies/episodes via `watchedAt`; packs via live Jellyfin signals). Both are
- *    reference-counted — the S3 object only leaves when its last holder does.
+ * Storage-pressure eviction — NOT a timer. Nothing is deleted on a schedule any
+ * more; content is kept until S3 usage reaches the configured budget
+ * (`maxStorageGB`), then only the least-useful files are freed until usage drops
+ * back under 90% of the budget. Eviction order: fully-watched files first, then
+ * the least-recently-touched; anything a member is actively watching (incl. season
+ * packs, via live Jellyfin signals) is protected. `maxStorageGB = 0` disables
+ * eviction entirely (keep everything). Reference-counted per S3 object.
  */
 export async function runRetention(): Promise<{ deleted: number }> {
   const cfg = await getConfig();
   if (!cfg.s3.endpoint || !cfg.s3.bucket) return { deleted: 0 };
-  if (!cfg.retention.autoDeleteWatched && !cfg.retention.autoDeleteIdle) return { deleted: 0 };
+  const capGB = cfg.retention.maxStorageGB;
+  if (!capGB || capGB <= 0) return { deleted: 0 }; // eviction off → keep everything
 
-  // Keep watched state fresh before deciding what to delete.
+  // Fresh watched state so ordering/protection reflect what's actually consumed.
   await syncWatchedState().catch(() => {});
   const bucket = cfg.s3.bucket;
   const s3 = makeS3(cfg.s3);
+  const cap = capGB * GB;
+  const target = cap * 0.9; // free down to 90% so we don't evict on every tick
+
+  // Collapse live rows into distinct S3 objects (shared files counted once).
+  const rows = await prisma.download.findMany({
+    where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null },
+    select: { s3Key: true, sizeBytes: true, watchedAt: true, completedAt: true, createdAt: true, tmdbId: true, kind: true, season: true },
+  });
+  interface FileInfo {
+    key: string; size: number; watched: boolean; lastTouch: number;
+    tmdbId: number | null; kind: string; season: number | null;
+  }
+  const files = new Map<string, FileInfo>();
+  for (const r of rows) {
+    const key = r.s3Key as string;
+    const touch = Math.max(r.completedAt?.getTime() ?? 0, r.watchedAt?.getTime() ?? 0, r.createdAt.getTime());
+    const f = files.get(key);
+    if (!f) {
+      files.set(key, { key, size: Number(r.sizeBytes), watched: r.watchedAt != null, lastTouch: touch, tmdbId: r.tmdbId, kind: r.kind, season: r.season });
+    } else {
+      f.watched = f.watched || r.watchedAt != null;
+      f.lastTouch = Math.max(f.lastTouch, touch);
+    }
+  }
+
+  let usage = 0;
+  for (const f of files.values()) usage += f.size;
+  if (usage < cap) return { deleted: 0 }; // under budget — nothing to do
+
+  // Protect anything someone is actively watching (covers packs without watchedAt).
+  const signals = await watchedSignals(cfg);
+  const isProtected = (f: FileInfo) =>
+    f.tmdbId != null &&
+    ((f.kind === "MOVIE" && signals.movies.has(f.tmdbId)) ||
+      (f.kind === "TV" && f.season != null && signals.seasons.has(`${f.tmdbId}:${f.season}`)));
+
+  // Evict fully-watched first, then oldest-touched first.
+  const evictable = [...files.values()]
+    .filter((f) => !isProtected(f))
+    .sort((a, b) => Number(b.watched) - Number(a.watched) || a.lastTouch - b.lastTouch);
+
   let deleted = 0;
-
-  /** Soft-delete a row: free the object only when it's the last live holder. */
-  const softDelete = async (id: string, s3Key: string | null) => {
-    if (s3Key) {
-      const others = await prisma.download.count({
-        where: { s3Key, s3DeletedAt: null, id: { not: id } },
-      });
-      if (others === 0) await deleteObject(s3, bucket, s3Key);
-    }
-    await prisma.download.update({ where: { id }, data: { s3DeletedAt: new Date() } });
-    deleted++;
-  };
-
-  // 1) Watched content past the watched window.
-  if (cfg.retention.autoDeleteWatched) {
-    const cutoff = new Date(Date.now() - cfg.retention.days * DAY);
-    const rows = await prisma.download.findMany({
-      where: { watchedAt: { lte: cutoff }, s3Key: { not: null }, s3DeletedAt: null },
-      select: { id: true, s3Key: true, title: true },
-    });
-    for (const r of rows) {
-      try {
-        await softDelete(r.id, r.s3Key);
-      } catch (e) {
-        console.error("[retention] watched delete failed:", r.title, (e as Error).message);
-      }
+  let freed = 0;
+  for (const f of evictable) {
+    if (usage <= target) break;
+    try {
+      const holders = await prisma.download.count({ where: { s3Key: f.key, s3DeletedAt: null } });
+      await deleteObject(s3, bucket, f.key).catch(() => {});
+      await prisma.download.updateMany({ where: { s3Key: f.key, s3DeletedAt: null }, data: { s3DeletedAt: new Date() } });
+      usage -= f.size;
+      freed += f.size;
+      deleted += holders;
+    } catch (e) {
+      console.error("[retention] evict failed:", f.key, (e as Error).message);
     }
   }
 
-  // 2) Idle content nobody has watched within the idle window.
-  if (cfg.retention.autoDeleteIdle) {
-    const idleCutoff = new Date(Date.now() - cfg.retention.idleDays * DAY);
-    const signals = await watchedSignals(cfg);
-    const candidates = await prisma.download.findMany({
-      where: {
-        status: "COMPLETED",
-        s3Key: { not: null },
-        s3DeletedAt: null,
-        completedAt: { lte: idleCutoff },
-      },
-      select: { id: true, s3Key: true, title: true, kind: true, tmdbId: true, season: true },
-    });
-    for (const r of candidates) {
-      try {
-        if (!r.s3Key) continue;
-        // Skip if any live row sharing this file is marked watched…
-        const watchedRows = await prisma.download.count({
-          where: { s3Key: r.s3Key, s3DeletedAt: null, watchedAt: { not: null } },
-        });
-        if (watchedRows > 0) continue;
-        // …or if Jellyfin shows anyone watching this movie / season (covers packs).
-        if (r.tmdbId) {
-          if (r.kind === "MOVIE" && signals.movies.has(r.tmdbId)) continue;
-          if (r.kind === "TV" && r.season != null && signals.seasons.has(`${r.tmdbId}:${r.season}`)) continue;
-        }
-        await softDelete(r.id, r.s3Key);
-      } catch (e) {
-        console.error("[retention] idle delete failed:", r.title, (e as Error).message);
-      }
-    }
-  }
-
-  if (deleted) {
-    await notify(`🧹 Freed storage: removed ${deleted} item(s) from S3 (watched + unwatched-idle cleanup).`);
+  if (freed > 0) {
+    await notify(
+      `🧹 Storage hit the ${capGB} GB budget — freed ${(freed / GB).toFixed(1)} GB by removing the least-recently-used titles. All re-downloadable on request.`,
+    );
   }
   return { deleted };
 }

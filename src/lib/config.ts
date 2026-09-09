@@ -41,7 +41,7 @@ export interface ResolvedConfig {
   torbox: { apiKey?: string };
   liveTv: { key?: string; groupBySource: boolean }; // aggregated M3U/EPG for Jellyfin Live TV
   appUrl: string; // public base URL of this app (for deep-link CTAs)
-  retention: { autoDeleteWatched: boolean; days: number; autoDeleteIdle: boolean; idleDays: number };
+  retention: { autoDeleteWatched: boolean; days: number; autoDeleteIdle: boolean; idleDays: number; maxStorageGB: number };
   discovery: { autoFollowFromJellyfin: boolean };
   registration: { enabled: boolean; code?: string }; // public /register gate
   webPush: { publicKey?: string; privateKey?: string; subject: string }; // VAPID (self-generated)
@@ -179,8 +179,9 @@ export async function getConfig(): Promise<ResolvedConfig> {
     retention: {
       autoDeleteWatched: settings.autoDeleteWatched === true,
       days: num(settings.retentionDays, 30),
-      autoDeleteIdle: settings.autoDeleteIdle !== false, // default ON
+      autoDeleteIdle: settings.autoDeleteIdle === true, // default OFF — no timer deletes
       idleDays: num(settings.idleDays, 15),
+      maxStorageGB: num(settings.maxStorageGB, 0), // 0 = keep everything, never evict
     },
     discovery: {
       autoFollowFromJellyfin: settings.autoFollowFromJellyfin !== false, // default on

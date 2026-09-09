@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { ProwlarrClient } from "../indexers/prowlarr";
-import { grabEpisode, ownedEpisodeKeys, removeDownload, EPISODE_AVAILABLE_DELAY } from "./downloads";
+import { grabEpisode, ownedEpisodeKeys, EPISODE_AVAILABLE_DELAY } from "./downloads";
 import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { enqueueSeasonGrab } from "../queue";
@@ -98,12 +98,11 @@ export async function unfollowShow(id: string): Promise<void> {
 }
 
 /**
- * Watch-driven season progression + finished-season cleanup, per member:
- *  - when they've watched the 2nd-to-last episode of their current season, pull
- *    the next one so it's ready before the finale ends;
- *  - once a season is fully watched AND its successor is owned, drop the finished
- *    one (reference-counted — the S3 file only leaves if no other member holds it).
- * Reads binary per-episode "played" from each member's own Jellyfin.
+ * Watch-driven season progression, per member: when they've watched the
+ * 2nd-to-last episode of their current season, pull the next one so it's ready
+ * before the finale ends. Reads binary per-episode "played" from each member's
+ * own Jellyfin. Finished seasons are NOT auto-removed here any more — storage is
+ * only reclaimed under budget pressure (see runRetention).
  */
 export async function advanceSeasons(): Promise<{ advanced: number; cleaned: number }> {
   const cfg = await getConfig();
@@ -114,7 +113,7 @@ export async function advanceSeasons(): Promise<{ advanced: number; cleaned: num
     select: { id: true, jellyfinUserId: true },
   });
   let advanced = 0;
-  let cleaned = 0;
+  const cleaned = 0; // finished-season auto-removal retired; kept for the return shape
 
   // TMDB season → released-episode-count, cached per show across users for one run.
   const epCountCache = new Map<number, Map<number, number>>();
@@ -183,25 +182,6 @@ export async function advanceSeasons(): Promise<{ advanced: number; cleaned: num
           `📺 Getting Season ${nextSeason} of “${f.title}” ready — you're near the end of Season ${currentSeason}.`,
         ).catch(() => {});
         advanced++;
-      }
-
-      // 2) Drop a finished season once its successor is owned (reference-counted).
-      for (const season of ownedSeasons) {
-        const count = epCounts.get(season) ?? 0;
-        if (count > 0 && ownedSeasons.has(season + 1) && watchedInSeason(season) >= count) {
-          const rows = await prisma.download.findMany({
-            where: { userId: u.id, tmdbId: f.tmdbId, kind: "TV", season, s3DeletedAt: null },
-            select: { id: true },
-          });
-          for (const r of rows) await removeDownload(r.id).catch(() => {});
-          if (rows.length) {
-            cleaned++;
-            await notifyUser(
-              u.id,
-              `🧹 Cleared Season ${season} of “${f.title}” — you finished it and Season ${season + 1} is ready. Re-add anytime.`,
-            ).catch(() => {});
-          }
-        }
       }
     }
   }

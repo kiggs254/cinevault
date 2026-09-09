@@ -20,7 +20,7 @@ const ALLOWED_SETTINGS = new Set([
   "s3Endpoint", "s3Region", "s3Bucket", "s3AccessKeyId", "s3PublicUrl", "s3BasePrefix",
   "preferredQuality", "minSeeders", "maxSizeGB", "deleteAfterUpload",
   "jellyfinUrl", "jellyfinPublicUrl", "jellyfinUserId", "telegramChatId", "telegramAllowedIds",
-  "autoDeleteWatched", "retentionDays", "autoDeleteIdle", "idleDays", "autoFollowFromJellyfin",
+  "autoDeleteWatched", "retentionDays", "autoDeleteIdle", "idleDays", "maxStorageGB", "autoFollowFromJellyfin",
   "registrationEnabled", "registrationCode",
 ]);
 const ALLOWED_SECRETS = new Set([
@@ -59,6 +59,7 @@ export async function PUT(req: Request) {
   if ("retentionDays" in patch) patch.retentionDays = Math.max(1, Number(patch.retentionDays) || 30);
   if ("autoDeleteIdle" in patch) patch.autoDeleteIdle = Boolean(patch.autoDeleteIdle);
   if ("idleDays" in patch) patch.idleDays = Math.max(1, Number(patch.idleDays) || 15);
+  if ("maxStorageGB" in patch) patch.maxStorageGB = Math.max(0, Number(patch.maxStorageGB) || 0);
 
   await saveConfig(patch);
   const config = await getMaskedConfig();
