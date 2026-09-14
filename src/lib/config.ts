@@ -179,8 +179,8 @@ export async function getConfig(): Promise<ResolvedConfig> {
     retention: {
       autoDeleteWatched: settings.autoDeleteWatched === true,
       days: num(settings.retentionDays, 30),
-      autoDeleteIdle: settings.autoDeleteIdle === true, // default OFF — no timer deletes
-      idleDays: num(settings.idleDays, 15),
+      autoDeleteIdle: settings.autoDeleteIdle !== false, // default ON
+      idleDays: num(settings.idleDays, 60),
       maxStorageGB: num(settings.maxStorageGB, 0), // 0 = keep everything, never evict
     },
     discovery: {

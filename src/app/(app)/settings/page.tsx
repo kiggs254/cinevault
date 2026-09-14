@@ -111,9 +111,11 @@ const SECTIONS: Section[] = [
   {
     group: "storage",
     title: "Storage lifecycle",
-    desc: "Nothing is deleted on a timer. Everything you add is kept until S3 usage reaches the budget below — then, only to make room, the least-recently-used titles are freed (watched ones first). All re-downloadable on request and reference-counted (a shared file only leaves when its last holder does). Set 0 to never auto-delete.",
+    desc: "Two safety nets — both re-downloadable on request and reference-counted (a shared file only leaves when its last holder does). Idle purge removes titles nobody has watched after the window below. The storage budget is a backstop: if usage still reaches it, the least-recently-used titles (watched ones first) are freed to make room. Budget 0 = backstop off.",
     fields: [
-      { k: "maxStorageGB", label: "Storage budget (GB) — only free space when this is reached (0 = never delete)", type: "number" },
+      { k: "autoDeleteIdle", label: "Auto-delete titles nobody has watched", type: "toggle" },
+      { k: "idleDays", label: "Remove this many days after adding if still unwatched", type: "number" },
+      { k: "maxStorageGB", label: "Storage budget (GB) — backstop; free the oldest when reached (0 = off)", type: "number" },
     ],
   },
   {
@@ -150,6 +152,8 @@ const DEFAULTS: Settings = {
   maxSizeGB: 25,
   deleteAfterUpload: true,
   autoFollowFromJellyfin: true,
+  autoDeleteIdle: true,
+  idleDays: 60,
   maxStorageGB: 0,
 };
 

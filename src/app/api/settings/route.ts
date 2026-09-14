@@ -58,7 +58,7 @@ export async function PUT(req: Request) {
   if ("registrationEnabled" in patch) patch.registrationEnabled = Boolean(patch.registrationEnabled);
   if ("retentionDays" in patch) patch.retentionDays = Math.max(1, Number(patch.retentionDays) || 30);
   if ("autoDeleteIdle" in patch) patch.autoDeleteIdle = Boolean(patch.autoDeleteIdle);
-  if ("idleDays" in patch) patch.idleDays = Math.max(1, Number(patch.idleDays) || 15);
+  if ("idleDays" in patch) patch.idleDays = Math.max(1, Number(patch.idleDays) || 60);
   if ("maxStorageGB" in patch) patch.maxStorageGB = Math.max(0, Number(patch.maxStorageGB) || 0);
 
   await saveConfig(patch);
