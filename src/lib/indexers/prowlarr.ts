@@ -1,4 +1,5 @@
 import type { MediaKind, TorrentResult } from "../types";
+import type { SearchOpts } from "./search";
 
 interface ProwlarrRelease {
   title: string;
@@ -50,10 +51,7 @@ export class ProwlarrClient {
     this.apiKey = cfg.apiKey;
   }
 
-  async search(
-    query: string,
-    opts: { categories?: number[]; limit?: number; indexerIds?: number[] } = {},
-  ): Promise<TorrentResult[]> {
+  async search(query: string, opts: SearchOpts = {}): Promise<TorrentResult[]> {
     const params = new URLSearchParams();
     params.set("query", cleanSearchQuery(query));
     params.set("type", "search");

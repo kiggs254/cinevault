@@ -93,6 +93,22 @@ async function tmdbFetch<T>(
 function posterFrom(p?: string | null): string | undefined {
   return p ? `${IMG_BASE}${p}` : undefined;
 }
+
+const imdbCache = new Map<string, string | null>();
+/** TMDB id → IMDB id (tt…) for a movie or TV show. Cached per process. */
+export async function getImdbId(
+  apiKey: string,
+  type: "movie" | "tv",
+  id: number,
+): Promise<string | null> {
+  const key = `${type}:${id}`;
+  const hit = imdbCache.get(key);
+  if (hit !== undefined) return hit;
+  const data = await tmdbFetch<{ imdb_id?: string | null }>(apiKey, `/${type}/${id}/external_ids`);
+  const imdb = data?.imdb_id ?? null;
+  imdbCache.set(key, imdb);
+  return imdb;
+}
 function yearOf(date?: string | null): number | undefined {
   return date ? Number(date.slice(0, 4)) || undefined : undefined;
 }

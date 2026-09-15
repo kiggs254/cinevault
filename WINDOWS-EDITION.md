@@ -51,9 +51,15 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
     `registerWorker`/`closeQueues`; the worker no longer news up BullMQ `Worker`s.
   - Activity feed (`src/lib/activity.ts`): in-memory ring buffer vs Redis list.
   - Rate limiter (`src/lib/ratelimit.ts`): in-memory window vs Redis.
-- [ ] **Phase 4 — TorBox-only download path.** Drop the qBittorrent/Prowlarr/
-  FlareSolverr dependency for this edition: search (TorBox search or a bundled
-  Torznab set) → TorBox → local folder. One API key.
+- [~] **Phase 4 — TorBox-only downloads (no qBittorrent/Prowlarr/FlareSolverr).**
+  - [x] Search infra: TorBox's free search API (`search-api.torbox.app`, IMDB-keyed,
+    resolved from our TMDB id via `getImdbId`). `src/lib/indexers/search.ts` adds a
+    `TorrentSearcher` interface (same `TorrentResult[]` shape as Prowlarr, so the
+    scorer/selection is unchanged), a `TorboxSearch` impl, and `getSearch(cfg)`
+    (TorBox on desktop, Prowlarr on cloud); `ProwlarrClient` widened to match.
+  - [ ] Wire the ~9 search call sites through `getSearch(cfg)` (thread tmdbId/kind/
+    season/episode), and skip the qBittorrent fallback in the desktop download path
+    (TorBox → local only). One TorBox key covers search + download.
 - [ ] **Phase 5 — Electron shell + installer.** Wrap the Next.js server + worker
   in an Electron main process; tray/desktop icon; auto-open the UI; `electron-builder`
   Windows target (NSIS `.exe`). First-run wizard (folder picker + keys).
