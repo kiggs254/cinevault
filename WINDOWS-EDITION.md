@@ -67,9 +67,17 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
 `CINEVAULT_DESKTOP=1` the app needs no Postgres service (embedded), no Redis
 (in-process), no S3 (local folder), and no qBittorrent/Prowlarr/FlareSolverr
 (TorBox). Only Phase 5 (the Electron shell that launches it all) remains.
-- [ ] **Phase 5 — Electron shell + installer.** Wrap the Next.js server + worker
-  in an Electron main process; tray/desktop icon; auto-open the UI; `electron-builder`
-  Windows target (NSIS `.exe`). First-run wizard (folder picker + keys).
+- [~] **Phase 5 — Electron shell + Windows installer (first cut; build/test on Windows).**
+  - `src/desktop/runtime.ts`: single-process runtime — embedded Postgres → `prisma db
+    push` → Next server (programmatic) → import the worker, so the in-process queue +
+    event bus are shared between web and worker.
+  - `electron/main.mjs`: first-run folder pick + generated local secrets, forks the
+    runtime (via `tsx`), opens the window, external links → real browser.
+  - `package.json`: `desktop` / `desktop:build` / `desktop:dist` scripts +
+    electron-builder config (Windows NSIS, `asar:false`). Desktop-only deps (electron,
+    electron-builder, embedded-postgres) are installed on the build machine only, so
+    the cloud install/image is unaffected.
+  - `BUILD-WINDOWS.md`: step-by-step. Iterating on real Windows build errors next.
 - [ ] **Phase 6 — Polish.** Auto-update, bundled FFmpeg if needed, a plain-English
   README with screenshots.
 
