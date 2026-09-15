@@ -41,13 +41,16 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
   ambient type (`src/types/embedded-postgres.d.ts`) lets it typecheck here without
   installing the platform binary — that's added in the Phase 5 build. Wired into the
   shell in Phase 5. ✅
-- [~] **Phase 3 — Drop Redis (single-process runtime).**
-  - [x] Realtime event bus: `src/lib/events.ts` now uses an in-process EventEmitter
-    when `CINEVAULT_DESKTOP=1` (else Redis pub/sub) — SSE progress works with no Redis.
-  - [ ] Job queue: replace BullMQ (`src/lib/queue.ts` + the two `Worker`s in
-    `src/worker/index.ts`) with a pluggable queue — BullMQ backend for cloud, an
-    in-process concurrency-limited backend for desktop (repeatables via timers;
-    pending downloads re-derived on launch by the existing `recoverInterrupted`).
+- [x] **Phase 3 — Drop Redis (single-process runtime).** Everything that used Redis
+  now has an in-process path selected by `CINEVAULT_DESKTOP=1`:
+  - Event bus (`src/lib/events.ts`): in-process EventEmitter vs Redis pub/sub;
+    one `publishEvent` carries both progress + activity.
+  - Job queue (`src/lib/queue-backend.ts`): a `QueueBackend` interface with a BullMQ
+    backend (cloud, unchanged) and an in-process backend (per-queue concurrency,
+    timer repeatables, jobId dedup). `src/lib/queue.ts` delegates to it and adds
+    `registerWorker`/`closeQueues`; the worker no longer news up BullMQ `Worker`s.
+  - Activity feed (`src/lib/activity.ts`): in-memory ring buffer vs Redis list.
+  - Rate limiter (`src/lib/ratelimit.ts`): in-memory window vs Redis.
 - [ ] **Phase 4 — TorBox-only download path.** Drop the qBittorrent/Prowlarr/
   FlareSolverr dependency for this edition: search (TorBox search or a bundled
   Torznab set) → TorBox → local folder. One API key.

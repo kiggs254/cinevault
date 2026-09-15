@@ -1,9 +1,8 @@
 import "dotenv/config";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { Worker, type Job } from "bullmq";
-import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
+import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs, registerWorker, closeQueues } from "../lib/queue";
+import type { QueueJob } from "../lib/queue-backend";
 import { scanWatches } from "../lib/service/watches";
 import { scanFollowedShows, autoFollowFromJellyfin, advanceSeasons, backfillIncompleteSeasons } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
@@ -32,7 +31,7 @@ import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
 import { logActivity } from "../lib/activity";
-import type { DownloadJobData, DownloadStatus, MediaKind } from "../lib/types";
+import type { DownloadStatus, MediaKind } from "../lib/types";
 
 /** " S02E05" / " Season 2" / "" from a download row's season/episode. */
 function epTag(season: number | null, episode: number | null): string {
@@ -795,9 +794,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
 
 // Transfer worker: only the actual downloads (qBittorrent → S3). Kept on its own
 // pool so a burst of these long jobs can't starve searches/new grabs.
-const worker = new Worker<DownloadJobData>(
-  DOWNLOAD_QUEUE,
-  async (job: Job<DownloadJobData>) => {
+async function downloadProcessor(job: QueueJob): Promise<void> {
     const { downloadId } = job.data;
     try {
       await processDownload(downloadId);
@@ -847,24 +844,14 @@ const worker = new Worker<DownloadJobData>(
       } catch {
         /* best-effort */
       }
-      // Swallow so BullMQ does not auto-retry config errors; user retries via UI.
+      // Swallow so it isn't auto-retried on config errors; user retries via UI.
     }
-  },
-  {
-    connection: createRedis(),
-    concurrency: DOWNLOAD_CONCURRENCY,
-    // A killed worker's in-flight jobs stall and are re-run on restart; allow
-    // several stalls so repeated redeploys mid-download don't fail the job.
-    stalledInterval: 30_000,
-    maxStalledCount: 5,
-  },
-);
+}
+registerWorker(DOWNLOAD_QUEUE, DOWNLOAD_CONCURRENCY, downloadProcessor);
 
 // Grab worker: season/episode searches + maintenance. Short jobs on a separate
 // pool, so the agent is always ready to queue more even while downloads run.
-const grabWorker = new Worker<DownloadJobData>(
-  GRAB_QUEUE,
-  async (job: Job<DownloadJobData>) => {
+async function grabProcessor(job: QueueJob): Promise<void> {
     const maintenance = MAINTENANCE[job.name];
     if (maintenance) {
       try {
@@ -911,14 +898,8 @@ const grabWorker = new Worker<DownloadJobData>(
       }
       return;
     }
-  },
-  {
-    connection: createRedis(),
-    concurrency: GRAB_CONCURRENCY,
-    stalledInterval: 30_000,
-    maxStalledCount: 5,
-  },
-);
+}
+registerWorker(GRAB_QUEUE, GRAB_CONCURRENCY, grabProcessor);
 
 /**
  * On startup, re-queue any downloads the DB still thinks are in progress. A
@@ -969,26 +950,23 @@ async function configureQbittorrent(): Promise<void> {
   }
 }
 
-worker.on("ready", () => {
-  console.log(`[worker] ready — downloads×${DOWNLOAD_CONCURRENCY}, grabs×${GRAB_CONCURRENCY}`);
-  // Seed the bootstrap admin + adopt any legacy ownerless rows before scans run.
-  void ensureBootstrapAdmin()
-    .then(() => console.log("[worker] bootstrap admin ensured"))
-    .catch((e) => console.error("[worker] bootstrap admin failed:", (e as Error).message));
-  void configureQbittorrent();
-  void recoverInterrupted();
-  void schedulePeriodicJobs()
-    .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))
-    .catch(() => {});
-  startTelegramBot();
-  console.log("[worker] telegram bot poller started");
-});
-worker.on("error", (err) => console.error("[worker] error:", err));
-grabWorker.on("error", (err) => console.error("[grab] error:", err));
+// Workers are registered synchronously above; run the startup sequence now.
+console.log(`[worker] ready — downloads×${DOWNLOAD_CONCURRENCY}, grabs×${GRAB_CONCURRENCY}`);
+// Seed the bootstrap admin + adopt any legacy ownerless rows before scans run.
+void ensureBootstrapAdmin()
+  .then(() => console.log("[worker] bootstrap admin ensured"))
+  .catch((e) => console.error("[worker] bootstrap admin failed:", (e as Error).message));
+void configureQbittorrent();
+void recoverInterrupted();
+void schedulePeriodicJobs()
+  .then(() => console.log("[worker] periodic jobs scheduled (scan, follows, reco, retention)"))
+  .catch(() => {});
+startTelegramBot();
+console.log("[worker] telegram bot poller started");
 
 async function shutdown() {
   console.log("[worker] shutting down…");
-  await Promise.allSettled([worker.close(), grabWorker.close()]);
+  await closeQueues();
   await prisma.$disconnect();
   process.exit(0);
 }
