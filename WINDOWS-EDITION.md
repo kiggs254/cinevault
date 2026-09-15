@@ -13,7 +13,7 @@ selected at runtime by config.
 | Concern | Cloud edition (main) | Home edition (this branch) |
 |---|---|---|
 | Shell | Docker Compose (7 services) | **Electron** → one Windows installer |
-| Database | Postgres | **SQLite** (file in `%APPDATA%\Cinevault`) |
+| Database | Postgres | **embedded Postgres** (bundled binary, `%APPDATA%\Cinevault\pgdata`) |
 | Job queue | Redis + BullMQ | **in-process queue** (persisted in SQLite) |
 | Download | TorBox → S3, or qBittorrent → S3 | **TorBox → local folder** (no qBit/Prowlarr/FlareSolverr) |
 | Search | Prowlarr | TorBox search, or a small built-in Torznab set |
@@ -31,9 +31,16 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
   streams TorBox bodies straight to disk. All call sites (worker, downloads,
   retention, follows, library API, settings) go through it. Local playback route
   `/api/media/[...key]` with HTTP range support. S3 path unchanged. ✅
-- [ ] **Phase 2 — SQLite.** Prisma `provider = "sqlite"`; a `schema.sqlite.prisma`
-  or provider switch; migrate JSON/enum usages that differ from Postgres; data dir
-  under `%APPDATA%`. Removes the Postgres service.
+- [x] **Phase 2 — DB without Docker (embedded Postgres).** Decided against SQLite
+  (the schema is enum/`Json`/`@db.Text`-heavy → a risky port plus two schemas to keep
+  in sync) and against PGlite (no maintained Prisma adapter). Instead the desktop
+  shell spawns a real Postgres from a **bundled binary** (`embedded-postgres` +
+  `@embedded-postgres/windows-x64`) — **zero schema/code changes, identical to
+  cloud**. `src/lib/runtime/local-db.ts` initialises it, creates the DB on first run,
+  and returns `DATABASE_URL`; data persists under `%APPDATA%\Cinevault\pgdata`. An
+  ambient type (`src/types/embedded-postgres.d.ts`) lets it typecheck here without
+  installing the platform binary — that's added in the Phase 5 build. Wired into the
+  shell in Phase 5. ✅
 - [ ] **Phase 3 — In-process queue.** Replace BullMQ/Redis with an in-process
   queue (concurrency-limited, persisted in SQLite, resumed on launch via the
   existing `recoverInterrupted`). Removes the Redis service.
@@ -45,6 +52,15 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
   Windows target (NSIS `.exe`). First-run wizard (folder picker + keys).
 - [ ] **Phase 6 — Polish.** Auto-update, bundled FFmpeg if needed, a plain-English
   README with screenshots.
+
+## Desktop-only build dependencies (added in Phase 5, kept out of the main install)
+- `embedded-postgres` + `@embedded-postgres/windows-x64` — the bundled DB.
+- `electron`, `electron-builder` — the shell + Windows installer.
+- (Phase 3/4 may add an in-process queue lib and drop `bullmq`/`ioredis` for this build.)
+
+These stay out of the cloud install so `main` isn't bloated; the Windows build adds
+them. Runtime code that needs them uses dynamic `import()` + an ambient type shim so
+the shared codebase still typechecks/builds without them.
 
 ## Notes
 - Keep the S3 path working at every step (both editions share the code).
