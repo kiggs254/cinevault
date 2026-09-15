@@ -41,9 +41,13 @@ Runtime selector: `STORAGE_BACKEND=local` + `MEDIA_DIR=<folder>` (see `src/lib/e
   ambient type (`src/types/embedded-postgres.d.ts`) lets it typecheck here without
   installing the platform binary — that's added in the Phase 5 build. Wired into the
   shell in Phase 5. ✅
-- [ ] **Phase 3 — In-process queue.** Replace BullMQ/Redis with an in-process
-  queue (concurrency-limited, persisted in SQLite, resumed on launch via the
-  existing `recoverInterrupted`). Removes the Redis service.
+- [~] **Phase 3 — Drop Redis (single-process runtime).**
+  - [x] Realtime event bus: `src/lib/events.ts` now uses an in-process EventEmitter
+    when `CINEVAULT_DESKTOP=1` (else Redis pub/sub) — SSE progress works with no Redis.
+  - [ ] Job queue: replace BullMQ (`src/lib/queue.ts` + the two `Worker`s in
+    `src/worker/index.ts`) with a pluggable queue — BullMQ backend for cloud, an
+    in-process concurrency-limited backend for desktop (repeatables via timers;
+    pending downloads re-derived on launch by the existing `recoverInterrupted`).
 - [ ] **Phase 4 — TorBox-only download path.** Drop the qBittorrent/Prowlarr/
   FlareSolverr dependency for this edition: search (TorBox search or a bundled
   Torznab set) → TorBox → local folder. One API key.
