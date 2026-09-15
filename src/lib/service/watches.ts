@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { getConfig, type ResolvedConfig } from "../config";
-import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
+import { categoriesForKind } from "../indexers/prowlarr";
+import { getSearch } from "../indexers/search";
 import { rankResults, type ScorePrefs } from "../scoring/scorer";
 import { createDownload } from "./downloads";
 import { fetchFeed } from "../rss";
@@ -96,8 +97,8 @@ async function ingestOne(i: IngestInput, cfg: ResolvedConfig): Promise<"grabbed"
 
 async function scanSearchWatch(w: Watch, cfg: ResolvedConfig) {
   if (!w.query || cfg.profile.legalIndexerIds.length === 0) return { grabbed: 0, discovered: 0 };
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
-  const results = await prowlarr.search(w.query, {
+  const searcher = getSearch(cfg);
+  const results = await searcher.search(w.query, {
     categories: categoriesForKind(w.kind as MediaKind),
     limit: 40,
     indexerIds: cfg.profile.legalIndexerIds,
@@ -168,12 +169,12 @@ async function discoverFromInterests(cfg: ResolvedConfig) {
   if (cfg.profile.interests.length === 0 || cfg.profile.legalIndexerIds.length === 0) {
     return { grabbed: 0, discovered: 0 };
   }
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   let grabbed = 0;
   let discovered = 0;
   for (const term of cfg.profile.interests.slice(0, 6)) {
     try {
-      const results = await prowlarr.search(term, {
+      const results = await searcher.search(term, {
         limit: 20,
         indexerIds: cfg.profile.legalIndexerIds,
       });

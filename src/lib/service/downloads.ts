@@ -1,7 +1,8 @@
 import { prisma } from "../db";
 import { getConfig, type ResolvedConfig } from "../config";
 import { planQuery } from "../llm/search-planner";
-import { ProwlarrClient, categoriesForKind } from "../indexers/prowlarr";
+import { categoriesForKind } from "../indexers/prowlarr";
+import { getSearch, searchReady, type TorrentSearcher } from "../indexers/search";
 import { QbClient, parseInfoHash } from "../torrent/qbittorrent";
 import {
   rankResults,
@@ -47,10 +48,11 @@ export async function planAndSearch(
   const cfg = await getConfig();
   const plan = await planQuery(nl, { defaultQuality: cfg.prefs.preferredQuality });
 
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
-  const results = await prowlarr.search(plan.searchTerms, {
+  const searcher = getSearch(cfg);
+  const results = await searcher.search(plan.searchTerms, {
     categories: categoriesForKind(plan.kind),
     limit: 60,
+    kind: plan.kind,
   });
 
   const ranked = rankResults(results, {
@@ -319,10 +321,15 @@ export async function grabMovie(opts: {
   if (twin) return twin;
 
   const cfg = await getConfig();
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   const q = `${opts.title}${opts.year ? ` ${opts.year}` : ""}`;
   void logActivity(`Searching sources for “${opts.title}”…`, { kind: "search", title: opts.title });
-  const results = await prowlarr.search(q, { categories: categoriesForKind("MOVIE"), limit: 60 });
+  const results = await searcher.search(q, {
+    categories: categoriesForKind("MOVIE"),
+    limit: 60,
+    tmdbId: opts.tmdbId,
+    kind: "MOVIE",
+  });
   const failed = await failedSourcesFor(opts.tmdbId, null, null);
   let pool = excludeFailed(results, failed);
   if (opts.requireNonCam) {
@@ -380,10 +387,10 @@ export async function grabSingleEpisode(opts: {
 }): Promise<boolean> {
   if (opts.season < 1 || opts.episode < 1) return false;
   const cfg = await getConfig();
-  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return false;
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  if (!searchReady(cfg)) return false;
+  const searcher = getSearch(cfg);
   return grabEpisode({
-    prowlarr,
+    searcher,
     cfg,
     show: { title: opts.title, year: opts.year ?? null, tmdbId: opts.tmdbId },
     ep: { seasonNumber: opts.season, episodeNumber: opts.episode },
@@ -586,7 +593,7 @@ export async function ownedEpisodeKeys(
  * `indexerIds` undefined = all indexers; `notify` false = no per-episode push.
  */
 export async function grabEpisode(o: {
-  prowlarr: ProwlarrClient;
+  searcher: TorrentSearcher;
   cfg: ResolvedConfig;
   show: { title: string; year?: number | null; tmdbId: number };
   ep: Pick<TmdbEpisode, "seasonNumber" | "episodeNumber" | "name">;
@@ -594,7 +601,7 @@ export async function grabEpisode(o: {
   notify?: boolean;
   userId?: string | null;
 }): Promise<boolean> {
-  const { prowlarr, cfg, show, ep } = o;
+  const { searcher, cfg, show, ep } = o;
   // Another member already has this episode? Clone it into the requester's
   // library instead of re-downloading.
   const twin = await cloneCompletedTwin(o.userId, {
@@ -609,10 +616,14 @@ export async function grabEpisode(o: {
   void logActivity(`Searching sources — ${label}`, { kind: "search", title: show.title });
   // Wide limit: indexers fuzzy-return a flood of the show's other episodes, so the
   // specific one we want can be buried — a small cap silently skips it.
-  const results = await prowlarr.search(q, {
+  const results = await searcher.search(q, {
     categories: categoriesForKind("TV"),
     limit: 100,
     indexerIds: o.indexerIds,
+    tmdbId: show.tmdbId,
+    kind: "TV",
+    season: ep.seasonNumber,
+    episode: ep.episodeNumber,
   });
   // Indexers fuzzy-match: a search for "Lucky S01E01" can return the latest
   // S09E05, or a different show ("Lucky Hank S01E01"). Require BOTH the exact
@@ -672,14 +683,15 @@ export async function grabEpisode(o: {
 
 /** Find a validated pack for EXACTLY this season (720p, smallest well-seeded). */
 async function findSeasonPack(
-  prowlarr: ProwlarrClient,
+  searcher: TorrentSearcher,
   cfg: ResolvedConfig,
   title: string,
   season: number,
+  tmdbId: number,
 ): Promise<ScoredResult | null> {
   const cats = categoriesForKind("TV");
   for (const q of [`${title} Season ${season}`, `${title} S${pad2(season)}`]) {
-    const results = await prowlarr.search(q, { categories: cats, limit: 60 });
+    const results = await searcher.search(q, { categories: cats, limit: 60, tmdbId, kind: "TV", season });
     const packs = results.filter(
       (r) => isSingleSeasonPack(r.title, season) && releaseTitleMatches(r.title, title),
     );
@@ -715,7 +727,7 @@ export async function grabSeason(opts: {
 
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey) return { ...base, reason: "TMDB not configured" };
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   const now = Date.now();
   const availableCutoff = now - EPISODE_AVAILABLE_DELAY; // wait for a playable release, not air-time junk
 
@@ -765,7 +777,7 @@ export async function grabSeason(opts: {
 
   // Old, complete season → prefer a validated single-season pack.
   if (olderThanYear) {
-    const pack = await findSeasonPack(prowlarr, cfg, opts.title, opts.season);
+    const pack = await findSeasonPack(searcher, cfg, opts.title, opts.season, opts.tmdbId);
     if (pack) {
       await createDownload({
         releaseName: pack.title,
@@ -848,10 +860,10 @@ export async function grabSeason(opts: {
 export async function runEpisodeGrab(data: EpisodeGrabData): Promise<boolean> {
   if (data.season < 1 || data.episode < 1) return false;
   const cfg = await getConfig();
-  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return false;
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  if (!searchReady(cfg)) return false;
+  const searcher = getSearch(cfg);
   return grabEpisode({
-    prowlarr,
+    searcher,
     cfg,
     show: { title: data.title, year: data.year, tmdbId: data.tmdbId },
     ep: { seasonNumber: data.season, episodeNumber: data.episode, name: data.name ?? undefined },
@@ -1054,7 +1066,7 @@ export async function resourceDownload(id: string): Promise<{ ok: boolean; messa
   if (!dl) return { ok: false, message: "Not found" };
   if (dl.status === "COMPLETED") return { ok: false, message: "Already downloaded" };
   const cfg = await getConfig();
-  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { ok: false, message: "Prowlarr not configured" };
+  if (!searchReady(cfg)) return { ok: false, message: "No torrent source configured" };
 
   // The current source is the problem — remember it as bad and exclude it + history.
   await recordFailedSources(dl.tmdbId, dl.season, dl.episode, failureEntries(dl));
@@ -1074,8 +1086,15 @@ export async function resourceDownload(id: string): Promise<{ ok: boolean; messa
     (isEp
       ? `${dl.title} S${pad2(dl.season!)}E${pad2(dl.episode!)}`
       : `${dl.title}${dl.year ? ` ${dl.year}` : ""}`);
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
-  const results = await prowlarr.search(q, { categories: categoriesForKind(dl.kind as MediaKind), limit: 100 });
+  const searcher = getSearch(cfg);
+  const results = await searcher.search(q, {
+    categories: categoriesForKind(dl.kind as MediaKind),
+    limit: 100,
+    tmdbId: dl.tmdbId,
+    kind: dl.kind as MediaKind,
+    season: dl.season,
+    episode: dl.episode,
+  });
   const matched = isEp
     ? results.filter((r) => isEpisodeMatch(r.title, dl.season!, dl.episode!) && releaseTitleMatches(r.title, dl.title))
     : results;
@@ -1134,7 +1153,7 @@ const RETRY_RESET_MS = 3 * 60 * 60 * 1000; // after this, re-try even already-tr
  */
 export async function retryFailed(): Promise<{ retried: number }> {
   const cfg = await getConfig();
-  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey || !cfg.tmdb.apiKey) return { retried: 0 };
+  if (!searchReady(cfg) || !cfg.tmdb.apiKey) return { retried: 0 };
   const stuckCutoff = new Date(Date.now() - RETRY_STUCK_MS);
   const candidates = await prisma.download.findMany({
     where: {
@@ -1152,7 +1171,7 @@ export async function retryFailed(): Promise<{ retried: number }> {
   });
   if (candidates.length === 0) return { retried: 0 };
 
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   const qb = cfg.qbit.url ? new QbClient(cfg.qbit) : null;
   const seen = new Set<string>();
   let retried = 0;
@@ -1194,7 +1213,14 @@ export async function retryFailed(): Promise<{ retried: number }> {
       ...failedStore.names,
     ]);
     const q = `${dl.title} S${pad2(dl.season)}E${pad2(dl.episode)}`;
-    const results = await prowlarr.search(q, { categories: categoriesForKind("TV"), limit: 100 });
+    const results = await searcher.search(q, {
+      categories: categoriesForKind("TV"),
+      limit: 100,
+      tmdbId: dl.tmdbId,
+      kind: "TV",
+      season: dl.season,
+      episode: dl.episode,
+    });
     const matched = results.filter(
       (r) => isEpisodeMatch(r.title, dl.season!, dl.episode!) && releaseTitleMatches(r.title, dl.title),
     );
@@ -1311,6 +1337,7 @@ function rebuildQuery(dl: {
 export async function reSource(
   dl: {
     kind: MediaKind;
+    tmdbId: number | null;
     query: string | null;
     title: string;
     year: number | null;
@@ -1321,12 +1348,19 @@ export async function reSource(
   triedInfoHashes: string[],
 ): Promise<ScoredResult | null> {
   const cfg = await getConfig();
-  if (!cfg.prowlarr.url || !cfg.prowlarr.apiKey) return null;
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  if (!searchReady(cfg)) return null;
+  const searcher = getSearch(cfg);
 
   const query = dl.query?.trim() || rebuildQuery(dl);
   if (!query) return null;
-  const results = await prowlarr.search(query, { categories: categoriesForKind(dl.kind), limit: 60 });
+  const results = await searcher.search(query, {
+    categories: categoriesForKind(dl.kind),
+    limit: 60,
+    tmdbId: dl.tmdbId,
+    kind: dl.kind,
+    season: dl.season,
+    episode: dl.episode,
+  });
 
   const exclude = new Set(triedInfoHashes.map((h) => h.toLowerCase()));
   if (dl.infoHash) exclude.add(dl.infoHash.toLowerCase());

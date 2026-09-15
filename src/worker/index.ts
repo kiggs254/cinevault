@@ -326,6 +326,7 @@ async function handleStall(
   const chosen = await reSource(
     {
       kind: dl.kind as MediaKind,
+      tmdbId: dl.tmdbId,
       query: dl.query,
       title: dl.title,
       year: dl.year,
@@ -592,7 +593,15 @@ async function processDownload(id: string): Promise<void> {
 
   // Fallback: qBittorrent → local staging dir → uploadContent → delete local.
   if (!uploaded) {
-    if (!qb) throw new Error("qBittorrent is not configured (see Settings)");
+    if (!qb) {
+      // Desktop/home edition is TorBox-only (no qBittorrent). If TorBox couldn't
+      // fetch it, fail cleanly — the retry-failed job will try again later.
+      throw new Error(
+        cfg.torbox.apiKey
+          ? "TorBox couldn't fetch this release — will retry"
+          : "No download provider configured (set a TorBox key or qBittorrent)",
+      );
+    }
     await qb.ensureCategory(CATEGORY);
 
     // Find the torrent by info-hash (survives qBittorrent's dedup, which keeps the

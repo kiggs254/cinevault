@@ -104,3 +104,11 @@ const DESKTOP = process.env.CINEVAULT_DESKTOP === "1";
 export function getSearch(cfg: ResolvedConfig): TorrentSearcher {
   return DESKTOP ? new TorboxSearch(cfg) : new ProwlarrClient(cfg.prowlarr);
 }
+
+/** Whether search is usable: TorBox key on desktop, Prowlarr configured on cloud. */
+export function searchReady(cfg: ResolvedConfig): boolean {
+  return DESKTOP ? !!cfg.torbox.apiKey : !!(cfg.prowlarr.url && cfg.prowlarr.apiKey);
+}
+
+/** True in the single-process desktop/home edition. */
+export const IS_DESKTOP = DESKTOP;

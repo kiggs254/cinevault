@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { getConfig } from "../config";
-import { ProwlarrClient } from "../indexers/prowlarr";
+import { getSearch, searchReady, IS_DESKTOP } from "../indexers/search";
 import { grabEpisode, ownedEpisodeKeys, EPISODE_AVAILABLE_DELAY } from "./downloads";
 import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
@@ -230,11 +230,11 @@ export async function autoFollowFromJellyfin(): Promise<{ added: number }> {
  */
 export async function scanFollowedShows(): Promise<{ checked: number; grabbed: number }> {
   const cfg = await getConfig();
-  if (!cfg.tmdb.apiKey || !cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { checked: 0, grabbed: 0 };
-  if (cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
+  if (!cfg.tmdb.apiKey || !searchReady(cfg)) return { checked: 0, grabbed: 0 };
+  if (!IS_DESKTOP && cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
 
   const shows = await prisma.followedShow.findMany({ where: { autoDownload: true } });
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   const now = Date.now();
   const availableCutoff = now - EPISODE_AVAILABLE_DELAY; // wait for a playable release, not air-time junk
   let grabbed = 0;
@@ -270,7 +270,7 @@ export async function scanFollowedShows(): Promise<{ checked: number; grabbed: n
           if (owned.has(key)) continue;
           if (
             await grabEpisode({
-              prowlarr,
+              searcher,
               cfg,
               show,
               ep,
@@ -308,8 +308,8 @@ const EP_RE = /s(\d{1,2})e(\d{1,2})(?:e(\d{1,2}))?/i;
  */
 export async function backfillIncompleteSeasons(): Promise<{ checked: number; grabbed: number }> {
   const cfg = await getConfig();
-  if (!cfg.tmdb.apiKey || !cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { checked: 0, grabbed: 0 };
-  if (cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
+  if (!cfg.tmdb.apiKey || !searchReady(cfg)) return { checked: 0, grabbed: 0 };
+  if (!IS_DESKTOP && cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
   const storage = getStorage(cfg);
   if (storage.kind === "s3" && !cfg.s3.bucket) return { checked: 0, grabbed: 0 };
 
@@ -331,7 +331,7 @@ export async function backfillIncompleteSeasons(): Promise<{ checked: number; gr
 
   const now = Date.now();
   const availableCutoff = now - EPISODE_AVAILABLE_DELAY;
-  const prowlarr = new ProwlarrClient(cfg.prowlarr);
+  const searcher = getSearch(cfg);
   let checked = 0;
   let grabbed = 0;
 
@@ -376,7 +376,7 @@ export async function backfillIncompleteSeasons(): Promise<{ checked: number; gr
       for (const ep of missing) {
         if (grabbed >= 24) break;
         const ok = await grabEpisode({
-          prowlarr,
+          searcher,
           cfg,
           show: { title: rep.title, year: rep.year, tmdbId },
           ep,
