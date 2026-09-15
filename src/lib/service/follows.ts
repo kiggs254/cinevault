@@ -5,7 +5,7 @@ import { grabEpisode, ownedEpisodeKeys, EPISODE_AVAILABLE_DELAY } from "./downlo
 import { notifyUser } from "../telegram/client";
 import { getTvDetails, getSeasonEpisodes, searchTitle } from "../metadata/tmdb";
 import { enqueueSeasonGrab } from "../queue";
-import { makeS3, listObjects } from "../storage/s3";
+import { getStorage } from "../storage";
 import { getWatchingSeries, getWatchedEpisodes, jellyfinReady } from "../jellyfin/client";
 import type { FollowedShow } from "@prisma/client";
 
@@ -310,7 +310,8 @@ export async function backfillIncompleteSeasons(): Promise<{ checked: number; gr
   const cfg = await getConfig();
   if (!cfg.tmdb.apiKey || !cfg.prowlarr.url || !cfg.prowlarr.apiKey) return { checked: 0, grabbed: 0 };
   if (cfg.profile.legalIndexerIds.length === 0) return { checked: 0, grabbed: 0 };
-  if (!cfg.s3.bucket) return { checked: 0, grabbed: 0 };
+  const storage = getStorage(cfg);
+  if (storage.kind === "s3" && !cfg.s3.bucket) return { checked: 0, grabbed: 0 };
 
   const rows = await prisma.download.findMany({
     where: {
@@ -331,7 +332,6 @@ export async function backfillIncompleteSeasons(): Promise<{ checked: number; gr
   const now = Date.now();
   const availableCutoff = now - EPISODE_AVAILABLE_DELAY;
   const prowlarr = new ProwlarrClient(cfg.prowlarr);
-  const s3 = makeS3(cfg.s3);
   let checked = 0;
   let grabbed = 0;
 
@@ -355,7 +355,7 @@ export async function backfillIncompleteSeasons(): Promise<{ checked: number; gr
       // folder, plus any episode already queued/downloading (don't double-grab).
       const prefix = (rep.s3Key as string).replace(/\/[^/]*$/, "/");
       const present = new Set<number>();
-      for (const en of await listObjects(s3, cfg.s3.bucket, prefix)) {
+      for (const en of await storage.listObjects(prefix)) {
         if (en.isFolder) continue;
         const m = EP_RE.exec(en.key.split("/").pop() ?? "");
         if (m) {

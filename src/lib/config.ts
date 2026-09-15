@@ -22,6 +22,9 @@ export interface ResolvedConfig {
     publicUrl?: string;
     basePrefix: string;
   };
+  // Where finished media lives: "s3" (cloud object storage) or "local" (a folder on
+  // this machine — the Windows/home edition). `mediaDir` is the local root.
+  storage: { backend: "s3" | "local"; mediaDir: string };
   tmdb: { apiKey?: string };
   prefs: {
     preferredQuality: string;
@@ -137,6 +140,10 @@ export async function getConfig(): Promise<ResolvedConfig> {
       secretAccessKey: dec("s3SecretAccessKey") ?? env.S3_SECRET_ACCESS_KEY,
       publicUrl: str(settings.s3PublicUrl) ?? env.S3_PUBLIC_URL,
       basePrefix: str(settings.s3BasePrefix) ?? env.S3_BASE_PREFIX ?? "moviehub",
+    },
+    storage: {
+      backend: (str(settings.storageBackend) ?? env.STORAGE_BACKEND ?? "s3") === "local" ? "local" : "s3",
+      mediaDir: str(settings.mediaDir) ?? env.MEDIA_DIR ?? "/data/media",
     },
     tmdb: { apiKey: dec("tmdbApiKey") ?? env.TMDB_API_KEY },
     prefs: {

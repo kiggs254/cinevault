@@ -53,13 +53,13 @@ function guessType(file: string): string {
   return MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream";
 }
 
-interface LocalFile {
+export interface LocalFile {
   abs: string;
   rel: string;
   size: number;
 }
 
-async function collectFiles(target: string): Promise<LocalFile[]> {
+export async function collectFiles(target: string): Promise<LocalFile[]> {
   const stat = await fs.promises.stat(target);
   if (stat.isFile()) {
     return [{ abs: target, rel: path.basename(target), size: stat.size }];

@@ -12,7 +12,8 @@ import {
   parseRelease,
 } from "../scoring/scorer";
 import { getSeasonEpisodes, getTvDetails, getTitle, type TmdbEpisode } from "../metadata/tmdb";
-import { makeS3, deleteObject, renameObject, headObjectSize, classifyStoredFile } from "../storage/s3";
+import { classifyStoredFile } from "../storage/s3";
+import { getStorage } from "../storage";
 import { triggerLibraryScan } from "../jellyfin/admin";
 import { notifyActivity } from "../telegram/client";
 import { Prisma, type Download } from "@prisma/client";
@@ -886,10 +887,10 @@ export async function retryDownload(id: string): Promise<DownloadDTO | null> {
   return toDTO(updated);
 }
 
-/** Delete this download's own archived object(s) from S3 (best-effort). */
+/** Delete this download's own archived object(s) from the store (best-effort). */
 async function deleteDownloadObjects(row: Download, cfg: ResolvedConfig): Promise<void> {
-  const bucket = row.s3Bucket ?? cfg.s3.bucket;
-  if (!bucket || !cfg.s3.endpoint || !cfg.s3.accessKeyId) return;
+  const storage = getStorage(cfg);
+  if (storage.kind === "s3" && (!(row.s3Bucket ?? cfg.s3.bucket) || !cfg.s3.endpoint || !cfg.s3.accessKeyId)) return;
   // Shared files, personal libraries: if another member's (non-deleted) row points
   // at the same file, keep the object — just drop this member's row.
   if (row.s3Key) {
@@ -910,9 +911,8 @@ async function deleteDownloadObjects(row: Download, cfg: ResolvedConfig): Promis
     : [];
   const targets = stored.length ? stored : row.s3Key ? [row.s3Key] : [];
   if (targets.length === 0) return;
-  const s3 = makeS3(cfg.s3);
   for (const key of targets) {
-    await deleteObject(s3, bucket, key).catch(() => {});
+    await storage.deleteObject(key).catch(() => {});
   }
 }
 
@@ -950,18 +950,16 @@ export async function removeDownload(id: string): Promise<void> {
  */
 export async function repairMislabeledMedia(): Promise<{ fixed: number; removed: number }> {
   const cfg = await getConfig();
-  if (!cfg.s3.endpoint || !cfg.s3.bucket) return { fixed: 0, removed: 0 };
+  const storage = getStorage(cfg);
+  if (storage.kind === "s3" && (!cfg.s3.endpoint || !cfg.s3.bucket)) return { fixed: 0, removed: 0 };
   const rows = await prisma.download.findMany({
     where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null },
     select: { id: true, s3Key: true, s3Bucket: true, metadata: true, title: true },
   });
-  const s3 = makeS3(cfg.s3);
   let fixed = 0;
   let removed = 0;
   for (const r of rows) {
     if (!r.s3Key) continue;
-    const bucket = r.s3Bucket ?? cfg.s3.bucket;
-    if (!bucket) continue;
     const meta =
       r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
         ? (r.metadata as Record<string, unknown>)
@@ -976,14 +974,14 @@ export async function repairMislabeledMedia(): Promise<{ fixed: number; removed:
     let bestSize = -1;
     let changed = false;
     for (const k of allKeys) {
-      const size = await headObjectSize(s3, bucket, k);
+      const size = await storage.headObjectSize(k);
       if (size == null) {
         keep.push(k); // can't measure → leave it alone
         continue;
       }
       const verdict = classifyStoredFile(k.split("/").pop() ?? "", size);
       if (verdict === "delete") {
-        await deleteObject(s3, bucket, k).catch(() => {});
+        await storage.deleteObject(k).catch(() => {});
         removed++;
         changed = true;
       } else if (verdict === "keep") {
@@ -994,7 +992,7 @@ export async function repairMislabeledMedia(): Promise<{ fixed: number; removed:
         parts[parts.length - 1] = verdict.rename;
         const to = parts.join("/");
         try {
-          await renameObject(s3, bucket, k, to);
+          await storage.renameObject(k, to);
           keep.push(to);
           if (size > bestSize) [bestSize, primary] = [size, to];
           fixed++;

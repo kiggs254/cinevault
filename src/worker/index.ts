@@ -25,7 +25,8 @@ import {
   retryFailed,
   recordDownloadFailure,
 } from "../lib/service/downloads";
-import { makeS3, uploadContent, uploadStream, classifyUploadName } from "../lib/storage/s3";
+import { classifyUploadName } from "../lib/storage/s3";
+import { getStorage, type StorageBackend } from "../lib/storage";
 import { triggerLibraryScan } from "../lib/jellyfin/admin";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -397,8 +398,7 @@ async function streamTorboxToS3(
   dl: { magnet: string; title: string; season: number | null; episode: number | null },
   cfg: ResolvedConfig,
   dest: {
-    s3: ReturnType<typeof makeS3>;
-    bucket: string;
+    storage: StorageBackend;
     keyPrefix: string;
     onProgress: (uploaded: number, total: number) => void;
   },
@@ -500,9 +500,7 @@ async function streamTorboxToS3(
     const body = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
     let fileLoaded = 0;
     try {
-      await uploadStream({
-        s3: dest.s3,
-        bucket: dest.bucket,
+      await dest.storage.uploadStream({
         key,
         body,
         onProgress: (loaded) => {
@@ -565,8 +563,11 @@ async function processDownload(id: string): Promise<void> {
     season: dl.season,
     episode: dl.episode,
   });
-  const keyPrefix = [cfg.s3.basePrefix, organized.s3Prefix].filter(Boolean).join("/");
-  const s3 = makeS3(cfg.s3);
+  const storage = getStorage(cfg);
+  // The local (home) edition writes straight under the media dir — no cloud bucket
+  // prefix — so files land as Movies/… and TV/… ready for any player / Jellyfin.
+  const basePrefix = storage.kind === "local" ? "" : cfg.s3.basePrefix;
+  const keyPrefix = [basePrefix, organized.s3Prefix].filter(Boolean).join("/");
   const emitUpload = throttle((uploadedBytes: number, total: number) => {
     const pct = total > 0 ? (uploadedBytes / total) * 100 : 0;
     void prisma.download.update({ where: { id }, data: { progress: pct } }).catch(() => {});
@@ -583,7 +584,7 @@ async function processDownload(id: string): Promise<void> {
       id,
       { magnet: dl.magnet, title: dl.title, season: dl.season, episode: dl.episode },
       cfg,
-      { s3, bucket: cfg.s3.bucket, keyPrefix, onProgress: emitUpload },
+      { storage, keyPrefix, onProgress: emitUpload },
     ).catch((e) => {
       console.error("[torbox]", (e as Error).message);
       return null;
@@ -632,13 +633,11 @@ async function processDownload(id: string): Promise<void> {
     };
 
     await setStatus(id, "UPLOADING", 0);
-    void logActivity(`Uploading ${dl.title}${epTag(dl.season, dl.episode)} to S3…`, {
+    void logActivity(`Saving ${dl.title}${epTag(dl.season, dl.episode)} to the library…`, {
       kind: "upload",
       title: dl.title,
     });
-    uploaded = await uploadContent({
-      s3,
-      bucket: cfg.s3.bucket,
+    uploaded = await storage.uploadContent({
       contentPath,
       keyPrefix,
       onProgress: emitUpload,

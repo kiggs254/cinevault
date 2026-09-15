@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getConfig, getMaskedConfig, saveConfig } from "@/lib/config";
 import { QbClient } from "@/lib/torrent/qbittorrent";
 import { ProwlarrClient } from "@/lib/indexers/prowlarr";
-import { bucketReachable, makeS3 } from "@/lib/storage/s3";
+import { getStorage } from "@/lib/storage";
 import { providerFor } from "@/lib/llm/providers";
 import { tgApi, sendMessage } from "@/lib/telegram/client";
 import { setJellyfinRequestLink, triggerLibraryScan } from "@/lib/jellyfin/admin";
@@ -83,12 +83,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok, message: ok ? "Prowlarr healthy" : "Prowlarr unhealthy" });
       }
       case "s3": {
-        if (!cfg.s3.bucket) throw new Error("Bucket not set");
-        const ok = await bucketReachable(makeS3(cfg.s3), cfg.s3.bucket);
-        return NextResponse.json({
-          ok,
-          message: ok ? `Bucket "${cfg.s3.bucket}" reachable` : "Bucket unreachable",
-        });
+        const storage = getStorage(cfg);
+        if (storage.kind === "s3" && !cfg.s3.bucket) throw new Error("Bucket not set");
+        const ok = await storage.reachable();
+        const where = storage.kind === "local" ? `Folder "${cfg.storage.mediaDir}"` : `Bucket "${cfg.s3.bucket}"`;
+        return NextResponse.json({ ok, message: ok ? `${where} reachable` : `${where} unreachable` });
       }
       case "ai": {
         const p = await providerFor("reason");

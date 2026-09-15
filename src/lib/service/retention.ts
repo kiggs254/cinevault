@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { jellyfinReady, getWatchedEpisodes, getPlayedTitles } from "../jellyfin/client";
-import { makeS3, deleteObject } from "../storage/s3";
+import { getStorage } from "../storage";
 import { notify } from "../telegram/client";
 
 /**
@@ -98,15 +98,14 @@ const DAY = 24 * 60 * 60 * 1000;
  */
 export async function runRetention(): Promise<{ deleted: number }> {
   const cfg = await getConfig();
-  if (!cfg.s3.endpoint || !cfg.s3.bucket) return { deleted: 0 };
+  const storage = getStorage(cfg);
+  if (storage.kind === "s3" && (!cfg.s3.endpoint || !cfg.s3.bucket)) return { deleted: 0 };
   const capGB = cfg.retention.maxStorageGB;
   const budgetOn = capGB > 0;
   if (!cfg.retention.autoDeleteIdle && !budgetOn) return { deleted: 0 };
 
   // Fresh watched state so both passes reflect what's actually been consumed.
   await syncWatchedState().catch(() => {});
-  const bucket = cfg.s3.bucket;
-  const s3 = makeS3(cfg.s3);
   const signals = await watchedSignals(cfg);
   let deleted = 0;
   let freed = 0;
@@ -133,7 +132,7 @@ export async function runRetention(): Promise<{ deleted: number }> {
         }
         // Reference-counted: free the object only when this is the last holder.
         const others = await prisma.download.count({ where: { s3Key: r.s3Key, s3DeletedAt: null, id: { not: r.id } } });
-        if (others === 0) await deleteObject(s3, bucket, r.s3Key).catch(() => {});
+        if (others === 0) await storage.deleteObject(r.s3Key).catch(() => {});
         await prisma.download.update({ where: { id: r.id }, data: { s3DeletedAt: new Date() } });
         deleted++;
       } catch (e) {
@@ -180,7 +179,7 @@ export async function runRetention(): Promise<{ deleted: number }> {
         if (usage <= target) break;
         try {
           const holders = await prisma.download.count({ where: { s3Key: f.key, s3DeletedAt: null } });
-          await deleteObject(s3, bucket, f.key).catch(() => {});
+          await storage.deleteObject(f.key).catch(() => {});
           await prisma.download.updateMany({ where: { s3Key: f.key, s3DeletedAt: null }, data: { s3DeletedAt: new Date() } });
           usage -= f.size;
           freed += f.size;

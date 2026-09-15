@@ -47,6 +47,11 @@ const schema = z.object({
   PROWLARR_URL: z.string().optional(),
   PROWLARR_API_KEY: z.string().optional(),
 
+  // Storage backend: "s3" (cloud, default) or "local" (write to MEDIA_DIR on this
+  // machine — the Windows/home edition, no object storage needed).
+  STORAGE_BACKEND: z.enum(["s3", "local"]).default("s3"),
+  MEDIA_DIR: z.string().default("/data/media"),
+
   // S3-compatible object storage (Contabo by default)
   S3_ENDPOINT: z.string().optional(),
   S3_REGION: z.string().optional(),
