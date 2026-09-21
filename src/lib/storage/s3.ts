@@ -95,10 +95,12 @@ export async function uploadContent(opts: {
   const files = await collectFiles(opts.contentPath);
   const prefix = opts.keyPrefix.replace(/^\/+|\/+$/g, "");
 
-  // Only upload real media; drop promo/junk and coerce bogus video extensions.
-  const uploadable = files
-    .map((f) => ({ f, name: classifyUploadName(f.rel.split("/").pop() ?? "", f.size) }))
-    .filter((x): x is { f: (typeof files)[number]; name: string } => x.name !== null);
+  // Only upload real media; drop promo/junk, coerce bogus video extensions, then
+  // keep one best file per episode (skip extras) so a pack never yields duplicates.
+  const candidates = files
+    .map((f) => ({ item: f, name: classifyUploadName(f.rel.split("/").pop() ?? "", f.size), size: f.size, path: f.rel }))
+    .filter((x): x is { item: (typeof files)[number]; name: string; size: number; path: string } => x.name !== null);
+  const uploadable = selectOneFilePerEpisode(candidates).map(({ item, name }) => ({ f: item, name }));
   const uploadTotal = uploadable.reduce((a, x) => a + x.f.size, 0);
 
   let doneBytes = 0;
@@ -284,6 +286,66 @@ export function classifyUploadName(name: string, sizeBytes: number): string | nu
   if (JUNK_EXT.test(base)) return null;
   if (sizeBytes >= MIN_VIDEO_BYTES) return mediaSafeName(base);
   return null;
+}
+
+/** Season-folder subtrees that are extras, not episodes — even if named SxxEyy. */
+const EXTRAS_PATH =
+  /(^|[/\\])(extras?|featurettes?|specials?|samples?|bonus|interviews?|deleted[ ._-]?scenes|behind[ ._-]?the[ ._-]?scenes|bloopers?|making[ ._-]?of)([/\\]|$)/i;
+/** SxxEyy anywhere in a filename. */
+const EPISODE_RE = /s(\d{1,2})e(\d{1,3})/i;
+/** Foreign-language / dual-audio markers — de-prioritised so the English file wins. */
+const FOREIGN_TAG = /\b(ita|spa|esp|fre|fra|vf|ger|deu|rus|multi|dual|vostfr|hindi|tam|tel|kor|jpn|jap|por|dan|swe|nor|nl|pl|cz|hun)\b/i;
+
+/** Rank a candidate pack file: prefer non-foreign, higher-res; size breaks ties. */
+export function packFileScore(name: string, size: number): number {
+  const l = name.toLowerCase();
+  let s = 0;
+  if (FOREIGN_TAG.test(l)) s -= 1000;
+  if (/2160p|\b4k\b/.test(l)) s += 40;
+  else if (/1080p/.test(l)) s += 20;
+  else if (/720p/.test(l)) s += 10;
+  if (/x265|hevc/.test(l)) s += 2;
+  return s * 1e13 + size; // score dominates; byte size is the tiebreak
+}
+
+/** Parsed "season x episode" key for a filename, or null if it isn't an episode. */
+export function episodeKeyOf(name: string): string | null {
+  const m = EPISODE_RE.exec(name);
+  return m ? `${Number(m[1])}x${Number(m[2])}` : null;
+}
+
+/** True if a file's full path lives under an extras/featurettes/sample subtree. */
+export function isExtrasPath(fullPath: string): boolean {
+  return EXTRAS_PATH.test(fullPath);
+}
+
+/**
+ * From a pack's candidate files, keep exactly ONE file per episode so Jellyfin
+ * never shows duplicates: drop anything under an extras/featurettes/sample subtree,
+ * then for each SxxEyy keep the best-scoring release (English / highest-res /
+ * largest). Files with no episode number (a movie, a whole-season single file, or
+ * subtitles) all pass through. `path` is the file's full path in the torrent (used
+ * for the extras check); `name` is the storage-safe filename.
+ */
+export function selectOneFilePerEpisode<T>(
+  files: { item: T; name: string; size: number; path: string }[],
+): { item: T; name: string }[] {
+  const best = new Map<string, { item: T; name: string; size: number }>();
+  const passthrough: { item: T; name: string }[] = [];
+  for (const f of files) {
+    if (isExtrasPath(f.path)) continue;
+    const key = episodeKeyOf(f.name);
+    if (!key) {
+      passthrough.push({ item: f.item, name: f.name });
+      continue;
+    }
+    const cur = best.get(key);
+    if (!cur || packFileScore(f.name, f.size) > packFileScore(cur.name, cur.size)) {
+      best.set(key, { item: f.item, name: f.name, size: f.size });
+    }
+  }
+  for (const f of best.values()) passthrough.push({ item: f.item, name: f.name });
+  return passthrough;
 }
 
 /**

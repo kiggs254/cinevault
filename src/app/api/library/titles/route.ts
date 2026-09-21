@@ -66,6 +66,10 @@ export async function GET() {
   });
 
   const groups = new Map<string, Group>();
+  // Per group, collapse rows to ONE entry per episode/pack/movie. Two members who
+  // both own an episode share the same file — the admin view must not show it twice
+  // (and shared files must not be size-counted twice).
+  const epMaps = new Map<string, Map<string, { item: Item; ready: boolean; active: boolean }>>();
   for (const d of rows) {
     const key = d.tmdbId ? `t${d.tmdbId}` : d.title.toLowerCase();
     let g = groups.get(key);
@@ -84,13 +88,19 @@ export async function GET() {
         items: [],
       };
       groups.set(key, g);
+      epMaps.set(key, new Map());
     }
     if (!g.posterUrl && d.posterUrl) g.posterUrl = d.posterUrl;
+
+    const epKey =
+      d.season != null && d.episode != null
+        ? `e${d.season}-${d.episode}`
+        : d.season != null
+          ? `p${d.season}`
+          : d.s3Key ?? `m${d.id}`;
     const active = ACTIVE.includes(d.status);
-    if (active) g.downloading = true;
-    else g.count += 1; // count only ready files
-    g.sizeBytes += Number(d.sizeBytes);
-    g.items.push({
+    const ready = !active && !!d.s3Key;
+    const item: Item = {
       id: d.id,
       releaseName: d.releaseName,
       season: d.season,
@@ -99,7 +109,27 @@ export async function GET() {
       progress: d.progress,
       sizeBytes: Number(d.sizeBytes),
       s3Key: d.s3Key,
-    });
+    };
+    const eps = epMaps.get(key)!;
+    const cur = eps.get(epKey);
+    if (!cur) {
+      eps.set(epKey, { item, ready, active });
+    } else {
+      // Prefer a ready row; among ready, the larger file.
+      if ((ready && !cur.ready) || (ready === cur.ready && item.sizeBytes > cur.item.sizeBytes)) {
+        cur.item = item;
+      }
+      cur.ready = cur.ready || ready;
+      cur.active = cur.active || active;
+    }
+  }
+
+  for (const [key, g] of groups) {
+    const aggs = [...epMaps.get(key)!.values()];
+    g.items = aggs.map((a) => a.item);
+    g.count = aggs.filter((a) => a.ready).length; // distinct ready episodes
+    g.downloading = aggs.some((a) => !a.ready && a.active);
+    g.sizeBytes = aggs.filter((a) => a.ready).reduce((s, a) => s + a.item.sizeBytes, 0);
   }
 
   const titles = [...groups.values()];

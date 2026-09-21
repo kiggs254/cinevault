@@ -25,7 +25,7 @@ import {
   retryFailed,
   recordDownloadFailure,
 } from "../lib/service/downloads";
-import { makeS3, uploadContent, uploadStream, classifyUploadName } from "../lib/storage/s3";
+import { makeS3, uploadContent, uploadStream, classifyUploadName, selectOneFilePerEpisode } from "../lib/storage/s3";
 import { triggerLibraryScan } from "../lib/jellyfin/admin";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
@@ -471,14 +471,21 @@ async function streamTorboxToS3(
   const prefix = dest.keyPrefix.replace(/^\/+|\/+$/g, "");
   // Keep only real media (drop promo/junk; coerce a bogus video extension); a
   // large file behind a ".exe" is the video, a tiny ".jpg/.txt" is a torrent ad.
-  const accepted: { f: (typeof info.files)[number]; name: string }[] = [];
-  for (const f of info.files) {
-    const n = classifyUploadName(
-      (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_"),
-      f.size || 0,
+  const candidates = info.files
+    .map((f) => {
+      const n = classifyUploadName(
+        (f.short_name || path.basename(f.name) || `file-${f.id}`).replace(/[/\\]/g, "_"),
+        f.size || 0,
+      );
+      return n ? { item: f, name: n, size: f.size || 0, path: f.name || f.short_name || "" } : null;
+    })
+    .filter(
+      (x): x is { item: (typeof info.files)[number]; name: string; size: number; path: string } =>
+        x !== null,
     );
-    if (n) accepted.push({ f, name: n });
-  }
+  // One best file per episode (skip extras) so a multi-version pack can't create
+  // duplicate episodes in Jellyfin.
+  const accepted = selectOneFilePerEpisode(candidates).map(({ item, name }) => ({ f: item, name }));
   if (accepted.length === 0) {
     await tb.remove(added.torrentId);
     return null; // nothing but junk — fall back to qBittorrent
