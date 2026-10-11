@@ -355,6 +355,13 @@ export default function SettingsPage() {
           <div className="space-y-6">
             {SECTIONS.filter((s) => s.group === tab).map((section) => {
             const t = section.test ? tests[section.test] : undefined;
+            // Results get a full-width line of their own below the header: these
+            // messages carry detail worth reading (provider quota, backfill
+            // progress) that a truncated chip beside the button used to hide.
+            const results = [section.test, ...(section.actions ?? []).map((a) => a.key)]
+              .filter((k): k is string => !!k)
+              .map((k) => ({ key: k, r: tests[k] }))
+              .filter((x) => x.r && !x.r.busy);
             return (
               <div key={section.title} className="panel p-6">
                 <div className="mb-5 flex items-start justify-between gap-4">
@@ -364,15 +371,6 @@ export default function SettingsPage() {
                   </div>
                   {section.test && (
                     <div className="flex flex-none items-center gap-2">
-                      {t && !t.busy && (
-                        <span
-                          className="flex items-center gap-1 text-xs"
-                          style={{ color: t.ok ? "var(--color-success)" : "var(--color-danger)" }}
-                        >
-                          {t.ok ? <Check size={13} /> : <X size={13} />}
-                          <span className="max-w-[12rem] truncate">{t.msg}</span>
-                        </span>
-                      )}
                       <button
                         className="btn btn-ghost"
                         onClick={() => runTest(section.test!)}
@@ -382,32 +380,41 @@ export default function SettingsPage() {
                         Test
                       </button>
                       {(section.actions ?? []).map((a) => {
-                          const ta = tests[a.key];
-                          return (
-                            <span key={a.key} className="flex items-center gap-1.5">
-                              {ta && !ta.busy && (
-                                <span
-                                  className="flex items-center gap-1 text-xs"
-                                  style={{ color: ta.ok ? "var(--color-success)" : "var(--color-danger)" }}
-                                >
-                                  {ta.ok ? <Check size={13} /> : <X size={13} />}
-                                  <span className="max-w-[9rem] truncate">{ta.msg}</span>
-                                </span>
-                              )}
-                              <button
-                                className="btn btn-ghost"
-                                onClick={() => runTest(a.key)}
-                                disabled={ta?.busy}
-                              >
-                                {ta?.busy ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-                                {a.label}
-                              </button>
-                            </span>
-                          );
+                        const ta = tests[a.key];
+                        return (
+                          <button
+                            key={a.key}
+                            className="btn btn-ghost"
+                            onClick={() => runTest(a.key)}
+                            disabled={ta?.busy}
+                          >
+                            {ta?.busy ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                            {a.label}
+                          </button>
+                        );
                       })}
                     </div>
                   )}
                 </div>
+
+                {results.length > 0 && (
+                  <div className="mb-5 space-y-1.5">
+                    {results.map(({ key, r }) => (
+                      <p
+                        key={key}
+                        className="flex items-start gap-1.5 text-xs"
+                        style={{ color: r!.ok ? "var(--color-success)" : "var(--color-danger)" }}
+                      >
+                        {r!.ok ? (
+                          <Check size={13} className="mt-0.5 flex-none" />
+                        ) : (
+                          <X size={13} className="mt-0.5 flex-none" />
+                        )}
+                        <span className="break-words">{r!.msg}</span>
+                      </p>
+                    ))}
+                  </div>
+                )}
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   {section.fields.map((f) => (

@@ -369,12 +369,19 @@ export async function sweepSubtitles(): Promise<{
   }
 
   if (added || adopted) await triggerLibraryScan(cfg.jellyfin).catch(() => {});
-  return {
-    titles: batch.length,
-    added,
-    adopted,
-    remaining: Math.max(0, due.length - batch.length),
-  };
+  const remaining = Math.max(0, due.length - batch.length);
+  // One line per batch in the activity feed, so a backfill is visibly running
+  // even when a batch of titles turns up nothing (the per-title lines only
+  // appear for titles that actually gained subtitles).
+  if (batch.length) {
+    const got = added + adopted;
+    void logActivity(
+      `💬 Subtitles: checked ${batch.length} title(s), added ${got}` +
+        (remaining ? ` — ${remaining} to go` : " — library is up to date"),
+      { kind: "info" },
+    );
+  }
+  return { titles: batch.length, added, adopted, remaining };
 }
 
 /** Library titles still missing at least one configured language. */
