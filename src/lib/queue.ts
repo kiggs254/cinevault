@@ -72,7 +72,20 @@ export async function enqueueScan(): Promise<void> {
   await enqueueJob("watch-scan");
 }
 
-/** Trigger any named maintenance job once, now (runs on the grab worker). */
+/**
+ * Queue a subtitle fetch for one finished download. Runs on the grab pool so it
+ * never holds a transfer slot, and after a short delay so the completion write
+ * has definitely landed.
+ */
+export async function enqueueSubtitleFetch(downloadId: string): Promise<void> {
+  await grabQueue().add(
+    "subtitle-fetch",
+    { downloadId },
+    { jobId: `subs-${downloadId}`, delay: 3000, removeOnComplete: true, removeOnFail: true },
+  );
+}
+
+/** Trigger any named maintenance job once (optionally after a delay). */
 export async function enqueueJob(
   name:
     | "watch-scan"
@@ -83,9 +96,15 @@ export async function enqueueJob(
     | "recover-stuck"
     | "retry-failed"
     | "wanted-scan"
-    | "season-backfill",
+    | "season-backfill"
+    | "subtitle-sweep",
+  opts?: { delayMs?: number },
 ): Promise<void> {
-  await grabQueue().add(name, { downloadId: "" }, { removeOnComplete: true, removeOnFail: true });
+  await grabQueue().add(
+    name,
+    { downloadId: "" },
+    { removeOnComplete: true, removeOnFail: true, ...(opts?.delayMs ? { delay: opts.delayMs } : {}) },
+  );
 }
 
 const MIN = 60 * 1000;
@@ -99,6 +118,7 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "auto-follow", every: 12 * HOUR, jobId: "auto-follow-repeat" },
   { name: "wanted-scan", every: 6 * HOUR, jobId: "wanted-scan-repeat" },
   { name: "season-backfill", every: 12 * HOUR, jobId: "season-backfill-repeat" },
+  { name: "subtitle-sweep", every: 2 * HOUR, jobId: "subtitle-sweep-repeat" },
   { name: "retention", every: 24 * HOUR, jobId: "retention-repeat" },
 ];
 

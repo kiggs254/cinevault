@@ -71,6 +71,13 @@ const schema = z.object({
   TELEGRAM_ALLOWED_IDS: z.string().optional(),
   TORBOX_API_KEY: z.string().optional(),
 
+  // Subtitles — both providers optional; configurable in Settings too.
+  SUBDL_API_KEY: z.string().optional(),
+  OPENSUBTITLES_API_KEY: z.string().optional(),
+  OPENSUBTITLES_USERNAME: z.string().optional(), // raises the daily download quota
+  OPENSUBTITLES_PASSWORD: z.string().optional(),
+  SUBTITLE_LANGUAGES: z.string().optional(), // e.g. "en" or "en,sw"
+
   // Web Push (VAPID). Optional — self-generated + stored in the DB on first use.
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),

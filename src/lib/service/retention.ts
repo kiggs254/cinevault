@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { getConfig } from "../config";
 import { jellyfinReady, getWatchedEpisodes, getPlayedTitles } from "../jellyfin/client";
-import { makeS3, deleteObject } from "../storage/s3";
+import { makeS3, deleteWithSidecars } from "../storage/s3";
 import { notify } from "../telegram/client";
 
 /**
@@ -86,6 +86,18 @@ async function watchedSignals(cfg: Awaited<ReturnType<typeof getConfig>>): Promi
 const GB = 1024 * 1024 * 1024;
 const DAY = 24 * 60 * 60 * 1000;
 
+/** The object keys a download row recorded (videos plus subtitle sidecars). */
+function recordedKeys(row: { s3Key: string | null; metadata: unknown }): string[] {
+  const meta =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const stored = Array.isArray(meta.s3Keys)
+    ? (meta.s3Keys as unknown[]).filter((k): k is string => typeof k === "string")
+    : [];
+  return stored.length ? stored : row.s3Key ? [row.s3Key] : [];
+}
+
 /**
  * Storage lifecycle sweep (daily). Two independent reclaimers:
  *  1. Idle purge (`autoDeleteIdle`, default on, `idleDays` default 60): free titles
@@ -116,7 +128,7 @@ export async function runRetention(): Promise<{ deleted: number }> {
     const idleCutoff = new Date(Date.now() - cfg.retention.idleDays * DAY);
     const candidates = await prisma.download.findMany({
       where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null, completedAt: { lte: idleCutoff } },
-      select: { id: true, s3Key: true, title: true, kind: true, tmdbId: true, season: true },
+      select: { id: true, s3Key: true, title: true, kind: true, tmdbId: true, season: true, metadata: true },
     });
     for (const r of candidates) {
       try {
@@ -133,7 +145,8 @@ export async function runRetention(): Promise<{ deleted: number }> {
         }
         // Reference-counted: free the object only when this is the last holder.
         const others = await prisma.download.count({ where: { s3Key: r.s3Key, s3DeletedAt: null, id: { not: r.id } } });
-        if (others === 0) await deleteObject(s3, bucket, r.s3Key).catch(() => {});
+        // Subtitle sidecars live and die with their video file.
+        if (others === 0) await deleteWithSidecars(s3, bucket, r.s3Key, recordedKeys(r));
         await prisma.download.update({ where: { id: r.id }, data: { s3DeletedAt: new Date() } });
         deleted++;
       } catch (e) {
@@ -148,11 +161,11 @@ export async function runRetention(): Promise<{ deleted: number }> {
     const target = cap * 0.9; // free down to 90% so we don't evict on every tick
     const rows = await prisma.download.findMany({
       where: { status: "COMPLETED", s3Key: { not: null }, s3DeletedAt: null },
-      select: { s3Key: true, sizeBytes: true, watchedAt: true, completedAt: true, createdAt: true, tmdbId: true, kind: true, season: true },
+      select: { s3Key: true, sizeBytes: true, watchedAt: true, completedAt: true, createdAt: true, tmdbId: true, kind: true, season: true, metadata: true },
     });
     interface FileInfo {
       key: string; size: number; watched: boolean; lastTouch: number;
-      tmdbId: number | null; kind: string; season: number | null;
+      tmdbId: number | null; kind: string; season: number | null; keys: string[];
     }
     const files = new Map<string, FileInfo>();
     for (const r of rows) {
@@ -160,10 +173,11 @@ export async function runRetention(): Promise<{ deleted: number }> {
       const touch = Math.max(r.completedAt?.getTime() ?? 0, r.watchedAt?.getTime() ?? 0, r.createdAt.getTime());
       const f = files.get(key);
       if (!f) {
-        files.set(key, { key, size: Number(r.sizeBytes), watched: r.watchedAt != null, lastTouch: touch, tmdbId: r.tmdbId, kind: r.kind, season: r.season });
+        files.set(key, { key, size: Number(r.sizeBytes), watched: r.watchedAt != null, lastTouch: touch, tmdbId: r.tmdbId, kind: r.kind, season: r.season, keys: recordedKeys(r) });
       } else {
         f.watched = f.watched || r.watchedAt != null;
         f.lastTouch = Math.max(f.lastTouch, touch);
+        f.keys = Array.from(new Set([...f.keys, ...recordedKeys(r)]));
       }
     }
     let usage = 0;
@@ -180,7 +194,7 @@ export async function runRetention(): Promise<{ deleted: number }> {
         if (usage <= target) break;
         try {
           const holders = await prisma.download.count({ where: { s3Key: f.key, s3DeletedAt: null } });
-          await deleteObject(s3, bucket, f.key).catch(() => {});
+          await deleteWithSidecars(s3, bucket, f.key, f.keys);
           await prisma.download.updateMany({ where: { s3Key: f.key, s3DeletedAt: null }, data: { s3DeletedAt: new Date() } });
           usage -= f.size;
           freed += f.size;

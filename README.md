@@ -84,6 +84,18 @@ title search anywhere in the app.
 - **Deploy-safe**: a redeploy can't strand an upload — interrupted work self-recovers
   within minutes.
 
+**Subtitles**
+- **Automatic for everything.** Every finished download gets subtitles, and a
+  background sweep backfills the whole existing library in paced batches.
+- Stored as Jellyfin **sidecars** beside the video in S3 (`Movie.2024.1080p.en.srt`),
+  so they need no plugin, work in any player, and travel with the media object.
+- Subtitles the release already shipped (even buried in `Subs/2_English.srt`) are
+  matched per episode and renamed first — free, and better synced. Anything still
+  missing is fetched from **SubDL** and **OpenSubtitles**, preferring a subtitle cut
+  for the exact release so it actually lines up.
+- Multi-language (`en,sw`), retried with a widening backoff when nothing exists yet,
+  and deleted along with their video.
+
 **Library & storage**
 - A poster wall of everything on S3, filterable by **type, genre and title**.
 - Files are auto-organized and enriched (`Movies/…`, `TV/Show/Season NN/…`) with TMDB
@@ -208,6 +220,7 @@ src/
     metadata/       # TMDB (titles, episodes, recommendations, trailers)
     torrent/        # qBittorrent client
     storage/        # S3 upload / list / presign
+    subtitles/      # auto-subtitles: providers, sidecar naming, library sweep
     scoring/        # deterministic release scorer + match validators
     service/        # pipeline: plan → search → rank → queue; follows; retention
     activity.ts     # background "what the agent is doing" log

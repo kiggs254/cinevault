@@ -6,6 +6,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   HeadBucketCommand,
+  PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -43,6 +44,10 @@ const MIME: Record<string, string> = {
   ".flac": "audio/flac",
   ".m4a": "audio/mp4",
   ".srt": "application/x-subrip",
+  ".vtt": "text/vtt",
+  ".ass": "text/x-ssa",
+  ".ssa": "text/x-ssa",
+  ".sub": "text/plain",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
@@ -218,6 +223,24 @@ export async function presignGet(
   });
 }
 
+/** Write a small in-memory object (used for subtitle sidecars). */
+export async function putObject(opts: {
+  s3: S3Client;
+  bucket: string;
+  key: string;
+  body: Buffer | string;
+  contentType?: string;
+}): Promise<void> {
+  await opts.s3.send(
+    new PutObjectCommand({
+      Bucket: opts.bucket,
+      Key: opts.key,
+      Body: opts.body,
+      ContentType: opts.contentType ?? guessType(opts.key),
+    }),
+  );
+}
+
 export async function deleteObject(
   s3: S3Client,
   bucket: string,
@@ -264,6 +287,33 @@ const JUNK_EXT = /\.(txt|nfo|jpg|jpeg|png|gif|webp|bmp|url|html?|md|sfv|diz|srr|
 const MIN_VIDEO_BYTES = 20 * 1024 * 1024;
 
 const isMedia = (name: string) => VIDEO_EXT.test(name) || SUBTITLE_EXT.test(name);
+
+/** True when this key/filename is a video container Jellyfin treats as media. */
+export const isVideoKey = (name: string) => VIDEO_EXT.test(name);
+/** True when this key/filename is a subtitle sidecar. */
+export const isSubtitleKey = (name: string) => SUBTITLE_EXT.test(name);
+
+/**
+ * The subtitle sidecars belonging to one video, out of a download's key list.
+ * Jellyfin pairs by filename, so a sidecar is "<video basename>.<extra>.<ext>" in
+ * the same folder — e.g. "Dune (2021).en.srt" next to "Dune (2021).mkv".
+ */
+export function sidecarKeysFor(videoKey: string, allKeys: string[]): string[] {
+  const stem = videoKey.replace(/\.[^./]+$/, "");
+  return allKeys.filter((k) => k !== videoKey && isSubtitleKey(k) && k.startsWith(`${stem}.`));
+}
+
+/** Delete a video object together with any subtitle sidecars recorded for it. */
+export async function deleteWithSidecars(
+  s3: S3Client,
+  bucket: string,
+  videoKey: string,
+  allKeys: string[],
+): Promise<void> {
+  for (const k of [videoKey, ...sidecarKeysFor(videoKey, allKeys)]) {
+    await deleteObject(s3, bucket, k).catch(() => {});
+  }
+}
 
 /** Coerce a bogus/executable/missing extension to ".mkv" (leaves media as-is). */
 export function mediaSafeName(name: string): string {

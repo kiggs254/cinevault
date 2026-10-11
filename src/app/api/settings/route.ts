@@ -7,6 +7,8 @@ import { providerFor } from "@/lib/llm/providers";
 import { tgApi, sendMessage } from "@/lib/telegram/client";
 import { setJellyfinRequestLink, triggerLibraryScan } from "@/lib/jellyfin/admin";
 import { repairMislabeledMedia } from "@/lib/service/downloads";
+import { checkSubtitleProviders, pendingSubtitleCount } from "@/lib/subtitles/service";
+import { enqueueJob } from "@/lib/queue";
 import { getSessionUser, isAdmin } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -22,10 +24,12 @@ const ALLOWED_SETTINGS = new Set([
   "jellyfinUrl", "jellyfinPublicUrl", "jellyfinUserId", "telegramChatId", "telegramAllowedIds",
   "autoDeleteWatched", "retentionDays", "autoDeleteIdle", "idleDays", "maxStorageGB", "autoFollowFromJellyfin",
   "registrationEnabled", "registrationCode",
+  "subtitlesEnabled", "subtitleLanguages", "subtitlesHearingImpaired", "opensubtitlesUsername",
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
   "jellyfinApiKey", "telegramBotToken", "torboxApiKey",
+  "subdlApiKey", "opensubtitlesApiKey", "opensubtitlesPassword",
 ]);
 
 /** Settings are admin-only. */
@@ -60,6 +64,10 @@ export async function PUT(req: Request) {
   if ("autoDeleteIdle" in patch) patch.autoDeleteIdle = Boolean(patch.autoDeleteIdle);
   if ("idleDays" in patch) patch.idleDays = Math.max(1, Number(patch.idleDays) || 60);
   if ("maxStorageGB" in patch) patch.maxStorageGB = Math.max(0, Number(patch.maxStorageGB) || 0);
+  if ("subtitlesEnabled" in patch) patch.subtitlesEnabled = Boolean(patch.subtitlesEnabled);
+  if ("subtitlesHearingImpaired" in patch) {
+    patch.subtitlesHearingImpaired = Boolean(patch.subtitlesHearingImpaired);
+  }
 
   await saveConfig(patch);
   const config = await getMaskedConfig();
@@ -129,6 +137,28 @@ export async function POST(req: Request) {
           message: parts.length
             ? `${parts.join(" + ")} + triggered a Jellyfin scan`
             : "Library looks clean — nothing to fix",
+        });
+      }
+      case "subtitles": {
+        return NextResponse.json(await checkSubtitleProviders());
+      }
+      case "fetchSubtitles": {
+        if (!cfg.subtitles.enabled) {
+          return NextResponse.json({ ok: false, message: "Auto-subtitles are switched off" });
+        }
+        const { pending, total } = await pendingSubtitleCount();
+        if (pending === 0) {
+          return NextResponse.json({
+            ok: true,
+            message: `All ${total} title(s) already have ${cfg.subtitles.languages.join(", ")}`,
+          });
+        }
+        // The sweep runs on the worker in bounded batches and chains itself until
+        // the backlog is clear, so this just kicks off the first one.
+        await enqueueJob("subtitle-sweep");
+        return NextResponse.json({
+          ok: true,
+          message: `Backfilling ${pending} of ${total} title(s) — runs in the background`,
         });
       }
       case "rescan": {

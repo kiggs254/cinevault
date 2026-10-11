@@ -58,6 +58,9 @@ model Download {
   tmdbId          Int? // links a release to its TMDB title (for follows + retention)
   watchedAt       DateTime? // set when Jellyfin reports the media as played
   s3DeletedAt     DateTime? // set when retention removed the file from S3
+  subsCheckedAt   DateTime? // last time subtitles were looked for (drives the sweep + backoff)
+  subsLangs       String? // languages fully covered by stored sidecars, e.g. "en,sw"
+  subsAttempts    Int            @default(0) // consecutive misses — backs off the retry interval
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   completedAt     DateTime?
@@ -68,6 +71,7 @@ model Download {
   @@index([createdAt])
   @@index([tmdbId])
   @@index([userId])
+  @@index([subsCheckedAt])
 }
 
 /// Single-row app configuration. Secrets are AES-256-GCM encrypted at rest.
@@ -81,24 +85,24 @@ model AppConfig {
 /// A community member. Portal login + an auto-provisioned Jellyfin account share
 /// the same username/password. Registration is admin-approved.
 model User {
-  id                String    @id @default(cuid())
-  username          String    @unique // portal login + Jellyfin username
-  passwordHash      String // scrypt: "scrypt$<salt>$<hash>"
-  pendingSecret     String? // AES-encrypted chosen password, kept only until Jellyfin is provisioned, then nulled
-  role              String    @default("member") // member | admin
-  status            String    @default("pending") // pending | active | denied | suspended
-  jellyfinUserId    String? // set when the Jellyfin account is provisioned
-  telegramChatId    String?   @unique // bound via bot /start link_<token>
-  telegramLinkToken String?   @unique // one-time token for the Telegram deep-link
-  notifyTelegram    Boolean   @default(true)
-  statusToken       String    @unique @default(cuid()) // opaque token for the public /welcome status poll
-  invitedById       String? // who referred this member (via their invite code)
+  id                   String    @id @default(cuid())
+  username             String    @unique // portal login + Jellyfin username
+  passwordHash         String // scrypt: "scrypt$<salt>$<hash>"
+  pendingSecret        String? // AES-encrypted chosen password, kept only until Jellyfin is provisioned, then nulled
+  role                 String    @default("member") // member | admin
+  status               String    @default("pending") // pending | active | denied | suspended
+  jellyfinUserId       String? // set when the Jellyfin account is provisioned
+  telegramChatId       String?   @unique // bound via bot /start link_<token>
+  telegramLinkToken    String?   @unique // one-time token for the Telegram deep-link
+  notifyTelegram       Boolean   @default(true)
+  statusToken          String    @unique @default(cuid()) // opaque token for the public /welcome status poll
+  invitedById          String? // who referred this member (via their invite code)
   acceptedGuidelinesAt DateTime? // when they accepted the community guidelines at registration
-  createdAt         DateTime  @default(now())
-  approvedAt        DateTime?
+  createdAt            DateTime  @default(now())
+  approvedAt           DateTime?
 
-  invitedBy       User?            @relation("MemberInvites", fields: [invitedById], references: [id], onDelete: SetNull)
-  invited         User[]           @relation("MemberInvites")
+  invitedBy       User?              @relation("MemberInvites", fields: [invitedById], references: [id], onDelete: SetNull)
+  invited         User[]             @relation("MemberInvites")
   invites         Invite[] // referral codes this member created
   downloads       Download[]
   follows         FollowedShow[]
@@ -229,7 +233,9 @@ model FollowedShow {
   @@index([userId])
 }
 
-/** A subscribed upcoming/unavailable movie: auto-download once a real (non-cam) release appears. */
+/**
+ * A subscribed upcoming/unavailable movie: auto-download once a real (non-cam) release appears.
+ */
 model WantedMovie {
   id            String    @id @default(cuid())
   tmdbId        Int

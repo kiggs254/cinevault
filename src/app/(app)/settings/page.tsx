@@ -20,6 +20,8 @@ interface Section {
   title: string;
   desc: string;
   test?: string;
+  /** Extra one-shot buttons rendered beside "Test" (same POST /api/settings targets). */
+  actions?: { key: string; label: string }[];
   fields: Field[];
 }
 
@@ -81,12 +83,33 @@ const SECTIONS: Section[] = [
     title: "Jellyfin (watch history)",
     desc: "Reads what you watch to power recommendations, auto-follow, and retention. On the same Docker network use http://jellyfin:8096.",
     test: "jellyfin",
+    actions: [
+      { key: "repairMedia", label: "Fix missing episodes" },
+      { key: "rescan", label: "Rescan library" },
+      { key: "jellyfinLink", label: "Add request link" },
+    ],
     fields: [
       { k: "jellyfinUrl", label: "Jellyfin URL (internal)", type: "url", placeholder: "http://jellyfin:8096" },
       { k: "jellyfinPublicUrl", label: "Jellyfin public URL (shown to members, Play links)", type: "url", placeholder: "https://jellyfin.example.com" },
       { k: "jellyfinApiKey", label: "Jellyfin API key", type: "secret" },
       { k: "jellyfinUserId", label: "User ID (optional — first user if blank)", type: "text" },
       { k: "autoFollowFromJellyfin", label: "Auto-follow shows I'm watching", type: "toggle" },
+    ],
+  },
+  {
+    group: "media",
+    title: "Subtitles",
+    desc: "Every finished download gets subtitles automatically, and a background sweep backfills everything already in your library. Subtitles are stored beside each video in S3 as \"<file>.en.srt\", which Jellyfin picks up with no plugin. Subtitles bundled inside a release are matched and renamed first (free); anything missing is fetched from SubDL and OpenSubtitles. A free SubDL key (subdl.com → account) carries the bulk work; OpenSubtitles is an optional second source with a small daily quota unless you add your username + password.",
+    test: "subtitles",
+    actions: [{ key: "fetchSubtitles", label: "Backfill now" }],
+    fields: [
+      { k: "subtitlesEnabled", label: "Auto-download subtitles for everything", type: "toggle" },
+      { k: "subtitleLanguages", label: "Languages (comma-separated, e.g. en,sw)", type: "text", placeholder: "en" },
+      { k: "subtitlesHearingImpaired", label: "Prefer hearing-impaired (SDH) subtitles", type: "toggle" },
+      { k: "subdlApiKey", label: "SubDL API key", type: "secret" },
+      { k: "opensubtitlesApiKey", label: "OpenSubtitles API key (optional)", type: "secret" },
+      { k: "opensubtitlesUsername", label: "OpenSubtitles username (raises the daily quota)", type: "text" },
+      { k: "opensubtitlesPassword", label: "OpenSubtitles password", type: "secret" },
     ],
   },
   {
@@ -155,6 +178,9 @@ const DEFAULTS: Settings = {
   autoDeleteIdle: true,
   idleDays: 60,
   maxStorageGB: 0,
+  subtitlesEnabled: true,
+  subtitleLanguages: "en",
+  subtitlesHearingImpaired: false,
 };
 
 export default function SettingsPage() {
@@ -355,14 +381,7 @@ export default function SettingsPage() {
                         {t?.busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
                         Test
                       </button>
-                      {section.test === "jellyfin" &&
-                        (
-                          [
-                            { key: "repairMedia", label: "Fix missing episodes" },
-                            { key: "rescan", label: "Rescan library" },
-                            { key: "jellyfinLink", label: "Add request link" },
-                          ] as const
-                        ).map((a) => {
+                      {(section.actions ?? []).map((a) => {
                           const ta = tests[a.key];
                           return (
                             <span key={a.key} className="flex items-center gap-1.5">
@@ -385,7 +404,7 @@ export default function SettingsPage() {
                               </button>
                             </span>
                           );
-                        })}
+                      })}
                     </div>
                   )}
                 </div>

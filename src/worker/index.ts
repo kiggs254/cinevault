@@ -3,7 +3,14 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { Worker, type Job } from "bullmq";
 import { createRedis } from "../lib/redis";
-import { DOWNLOAD_QUEUE, GRAB_QUEUE, enqueueDownload, schedulePeriodicJobs } from "../lib/queue";
+import {
+  DOWNLOAD_QUEUE,
+  GRAB_QUEUE,
+  enqueueDownload,
+  enqueueJob,
+  enqueueSubtitleFetch,
+  schedulePeriodicJobs,
+} from "../lib/queue";
 import { scanWatches } from "../lib/service/watches";
 import { scanFollowedShows, autoFollowFromJellyfin, advanceSeasons, backfillIncompleteSeasons } from "../lib/service/follows";
 import { refreshRecommendations } from "../lib/service/recommendations";
@@ -27,6 +34,7 @@ import {
 } from "../lib/service/downloads";
 import { makeS3, uploadContent, uploadStream, classifyUploadName, selectOneFilePerEpisode } from "../lib/storage/s3";
 import { triggerLibraryScan } from "../lib/jellyfin/admin";
+import { fetchSubtitlesForDownload, sweepSubtitles } from "../lib/subtitles/service";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
@@ -684,6 +692,9 @@ async function processDownload(id: string): Promise<void> {
   });
   await publishProgress({ type: "status", downloadId: id, status: "COMPLETED", progress: 100 });
   void pokeJellyfinScan(cfg); // index the new file in Jellyfin promptly
+  // Subtitles run on the grab pool so they never hold a transfer slot. One fetch
+  // covers every member riding on this same S3 object.
+  if (cfg.subtitles.enabled) await enqueueSubtitleFetch(id).catch(() => {});
   const seLabel =
     organized.season != null
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
@@ -799,6 +810,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   "auto-follow": autoFollowFromJellyfin,
   "wanted-scan": scanWantedMovies,
   retention: runRetention,
+  "subtitle-sweep": sweepSubtitles,
 };
 
 // Transfer worker: only the actual downloads (qBittorrent → S3). Kept on its own
@@ -878,8 +890,28 @@ const grabWorker = new Worker<DownloadJobData>(
       try {
         const s = await maintenance();
         console.log(`[grab] ${job.name}: ${JSON.stringify(s)}`);
+        // The subtitle sweep works in bounded batches so it can never hammer a
+        // provider. While a backlog remains (first run over an existing library),
+        // chain the next batch instead of waiting for the next scheduled tick.
+        if (job.name === "subtitle-sweep") {
+          const remaining = (s as { remaining?: number } | undefined)?.remaining ?? 0;
+          if (remaining > 0) await enqueueJob("subtitle-sweep", { delayMs: 60_000 });
+        }
       } catch (e) {
         console.error(`[grab] ${job.name} error:`, (e as Error).message);
+      }
+      return;
+    }
+    // Subtitles for one freshly-completed download.
+    if (job.name === "subtitle-fetch" && job.data.downloadId) {
+      try {
+        const r = await fetchSubtitlesForDownload(job.data.downloadId);
+        if (r.added || r.adopted) {
+          const cfg = await getConfig();
+          await triggerLibraryScan(cfg.jellyfin).catch(() => {});
+        }
+      } catch (e) {
+        console.error(`[grab] subtitle-fetch ${job.data.downloadId} failed:`, (e as Error).message);
       }
       return;
     }

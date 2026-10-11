@@ -37,6 +37,15 @@ export interface ResolvedConfig {
     legalIndexerIds: number[];
   };
   jellyfin: { url?: string; publicUrl?: string; apiKey?: string; userId?: string };
+  subtitles: {
+    enabled: boolean;
+    languages: string[]; // lowercase ISO-639-1 codes, e.g. ["en", "sw"]
+    hearingImpaired: boolean;
+    subdlApiKey?: string;
+    osApiKey?: string;
+    osUsername?: string;
+    osPassword?: string;
+  };
   telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
   torbox: { apiKey?: string };
   liveTv: { key?: string; groupBySource: boolean }; // aggregated M3U/EPG for Jellyfin Live TV
@@ -59,6 +68,9 @@ const SECRET_KEYS = [
   "jellyfinApiKey",
   "telegramBotToken",
   "torboxApiKey",
+  "subdlApiKey",
+  "opensubtitlesApiKey",
+  "opensubtitlesPassword",
   "vapidPrivateKey",
   "liveTvKey",
 ] as const;
@@ -91,6 +103,23 @@ function parseIds(raw: string | undefined): string[] {
         .filter((s) => /^-?\d+$/.test(s)),
     ),
   );
+}
+
+/**
+ * Parse a subtitle language list ("en, sw" / "en;pt-br") into lowercase ISO-639-1
+ * codes (optionally regional). Invalid entries are dropped; empty falls back to
+ * English so the feature is never silently a no-op.
+ */
+function parseLangs(raw: string | undefined): string[] {
+  const out = Array.from(
+    new Set(
+      (raw ?? "")
+        .split(/[\s,;|]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => /^[a-z]{2}(-[a-z]{2})?$/.test(s)),
+    ),
+  );
+  return out.length ? out : ["en"];
 }
 
 /** Resolve the effective config used by every integration. */
@@ -165,6 +194,17 @@ export async function getConfig(): Promise<ResolvedConfig> {
       apiKey: dec("jellyfinApiKey") ?? env.JELLYFIN_API_KEY,
       userId: str(settings.jellyfinUserId) ?? env.JELLYFIN_USER_ID,
     },
+    subtitles: {
+      enabled: settings.subtitlesEnabled !== false, // default ON
+      languages: parseLangs(
+        str(settings.subtitleLanguages) ?? env.SUBTITLE_LANGUAGES ?? "en",
+      ),
+      hearingImpaired: settings.subtitlesHearingImpaired === true,
+      subdlApiKey: dec("subdlApiKey") ?? env.SUBDL_API_KEY,
+      osApiKey: dec("opensubtitlesApiKey") ?? env.OPENSUBTITLES_API_KEY,
+      osUsername: str(settings.opensubtitlesUsername) ?? env.OPENSUBTITLES_USERNAME,
+      osPassword: dec("opensubtitlesPassword") ?? env.OPENSUBTITLES_PASSWORD,
+    },
     telegram: {
       botToken: dec("telegramBotToken") ?? env.TELEGRAM_BOT_TOKEN,
       chatId: str(settings.telegramChatId) ?? env.TELEGRAM_CHAT_ID,
@@ -215,6 +255,9 @@ export async function getMaskedConfig() {
     jellyfinApiKey: !!env.JELLYFIN_API_KEY,
     telegramBotToken: !!env.TELEGRAM_BOT_TOKEN,
     torboxApiKey: !!env.TORBOX_API_KEY,
+    subdlApiKey: !!env.SUBDL_API_KEY,
+    opensubtitlesApiKey: !!env.OPENSUBTITLES_API_KEY,
+    opensubtitlesPassword: !!env.OPENSUBTITLES_PASSWORD,
     vapidPrivateKey: !!env.VAPID_PRIVATE_KEY,
     liveTvKey: false, // no env fallback — self-generated on first use
   };
