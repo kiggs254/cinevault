@@ -214,7 +214,13 @@ export async function fetchSubtitlesForDownload(
         lang,
         hearingImpaired: cfg.subtitles.hearingImpaired,
       });
-      if (!got) continue;
+      if (!got) {
+        // The quota can run out DURING this lookup — the first one after any
+        // restart always rediscovers it this way. Nothing found while every
+        // provider is now cooling off is a deferral, not "no subtitles exist".
+        if (providers.every((p) => p.blocked())) deferred = true;
+        continue;
+      }
       // Providers already validate what they download; check again at the write
       // point so a provider bug can never park an ad page in the library.
       if (!looksLikeSubtitle(got.text, got.ext)) {
