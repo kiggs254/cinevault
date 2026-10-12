@@ -148,6 +148,8 @@ export interface DownloadJobData {
   downloadId: string;
   seasonGrab?: SeasonGrabData;
   episodeGrab?: EpisodeGrabData;
+  /** subtitle-fetch only: how many times this fetch has waited out a provider quota. */
+  subtitleRetry?: number;
 }
 
 export interface ProgressEvent {

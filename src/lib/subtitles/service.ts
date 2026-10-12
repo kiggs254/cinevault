@@ -583,3 +583,10 @@ export async function subtitleSettings(): Promise<{
     providers: buildProviders(cfg).map((p) => p.name),
   };
 }
+
+/** Milliseconds until at least one configured provider can be used again. */
+export async function subtitleCooldownMs(): Promise<number> {
+  const providers = buildProviders(await getConfig());
+  if (!providers.length) return 0;
+  return Math.min(...providers.map((p) => p.cooldownMs()));
+}

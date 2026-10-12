@@ -77,11 +77,22 @@ export async function enqueueScan(): Promise<void> {
  * never holds a transfer slot, and after a short delay so the completion write
  * has definitely landed.
  */
-export async function enqueueSubtitleFetch(downloadId: string): Promise<void> {
+export async function enqueueSubtitleFetch(
+  downloadId: string,
+  opts?: { delayMs?: number; retry?: number },
+): Promise<void> {
+  const retry = opts?.retry ?? 0;
   await grabQueue().add(
     "subtitle-fetch",
-    { downloadId },
-    { jobId: `subs-${downloadId}`, delay: 3000, removeOnComplete: true, removeOnFail: true },
+    { downloadId, subtitleRetry: retry },
+    {
+      // A retry gets its own id: the job scheduling it is still active under the
+      // base id, which would make BullMQ drop the add as a duplicate.
+      jobId: retry ? `subs-${downloadId}-r${retry}` : `subs-${downloadId}`,
+      delay: opts?.delayMs ?? 3000,
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
   );
 }
 

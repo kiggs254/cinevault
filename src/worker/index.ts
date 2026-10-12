@@ -34,7 +34,11 @@ import {
 } from "../lib/service/downloads";
 import { makeS3, uploadContent, uploadStream, classifyUploadName, selectOneFilePerEpisode } from "../lib/storage/s3";
 import { triggerLibraryScan } from "../lib/jellyfin/admin";
-import { fetchSubtitlesForDownload, sweepSubtitles } from "../lib/subtitles/service";
+import {
+  fetchSubtitlesForDownload,
+  subtitleCooldownMs,
+  sweepSubtitles,
+} from "../lib/subtitles/service";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
@@ -75,6 +79,9 @@ const DOWNLOAD_CONCURRENCY = Math.max(1, Math.floor(Number(process.env.DOWNLOAD_
 const GRAB_CONCURRENCY = Math.max(1, Math.floor(Number(process.env.GRAB_CONCURRENCY)) || 4);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// A subtitle fetch deferred by a spent provider quota retries after the reset,
+// at most this many times (≈ this many days on a daily quota).
+const SUBTITLE_MAX_RETRIES = 3;
 
 const UP_STATES = new Set([
   "uploading",
@@ -920,6 +927,17 @@ const grabWorker = new Worker<DownloadJobData>(
         if (r.added || r.adopted) {
           const cfg = await getConfig();
           await triggerLibraryScan(cfg.jellyfin).catch(() => {});
+        }
+        // Every provider was out of quota, so nothing was actually tried. Come
+        // back once it resets — with the automatic sweep switched off, nothing
+        // else would, and a member's request would quietly vanish. Bounded so a
+        // permanently refused key can't reschedule itself forever.
+        if (r.deferred && !r.complete) {
+          const retry = (job.data.subtitleRetry ?? 0) + 1;
+          if (retry <= SUBTITLE_MAX_RETRIES) {
+            const wait = Math.min(await subtitleCooldownMs(), 25 * 60 * 60 * 1000);
+            await enqueueSubtitleFetch(job.data.downloadId, { delayMs: wait + 60_000, retry });
+          }
         }
       } catch (e) {
         console.error(`[grab] subtitle-fetch ${job.data.downloadId} failed:`, (e as Error).message);
