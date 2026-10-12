@@ -97,7 +97,8 @@ export async function enqueueJob(
     | "retry-failed"
     | "wanted-scan"
     | "season-backfill"
-    | "subtitle-sweep",
+    | "subtitle-sweep"
+    | "subtitle-backfill",
   opts?: { delayMs?: number },
 ): Promise<void> {
   await grabQueue().add(

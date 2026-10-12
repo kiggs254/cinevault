@@ -19,6 +19,7 @@ import { prisma } from "../db";
 import { getConfig, type ResolvedConfig } from "../config";
 import { makeS3, listObjects, putObject, renameObject, isVideoKey } from "../storage/s3";
 import { triggerLibraryScan } from "../jellyfin/admin";
+import { enqueueSubtitleFetch } from "../queue";
 import { logActivity } from "../activity";
 import {
   buildProviders,
@@ -324,11 +325,12 @@ function dueForRetry(checkedAt: Date | null, attempts: number): boolean {
 }
 
 /**
- * Backfill the existing library, oldest-unchecked first. Runs on a schedule and
- * on demand; each pass takes a bounded slice so a few thousand titles catch up
- * over a day or two without ever tripping a provider's rate limit.
+ * Backfill the existing library, oldest-unchecked first. Each pass takes a
+ * bounded slice so a large library catches up without tripping a provider's
+ * rate limit. The scheduled run honours the `autoSweep` setting; `manual: true`
+ * is the admin pressing "Backfill now" and runs either way.
  */
-export async function sweepSubtitles(): Promise<{
+export async function sweepSubtitles(opts?: { manual?: boolean }): Promise<{
   titles: number;
   added: number;
   adopted: number;
@@ -337,9 +339,10 @@ export async function sweepSubtitles(): Promise<{
   deferred: number;
 }> {
   const cfg = await getConfig();
-  if (!cfg.subtitles.enabled || !cfg.s3.endpoint || !cfg.s3.bucket) {
-    return { titles: 0, added: 0, adopted: 0, remaining: 0, deferred: 0 };
-  }
+  const idle = { titles: 0, added: 0, adopted: 0, remaining: 0, deferred: 0 };
+  if (!cfg.subtitles.enabled || !cfg.s3.endpoint || !cfg.s3.bucket) return idle;
+  // The scheduled sweep is skippable; a manual backfill is an explicit request.
+  if (!cfg.subtitles.autoSweep && !opts?.manual) return idle;
   const langs = cfg.subtitles.languages;
   const wanted = new Set(langs);
 
@@ -478,4 +481,105 @@ export async function checkSubtitleProviders(): Promise<{ ok: boolean; message: 
     .map((p) => `${p.name} is at its daily limit (~${Math.max(1, Math.round(p.cooldownMs() / 3600_000))}h left)`);
   const parts = [results.map((r) => r.message).join(" · "), ...waiting, backlog];
   return { ok, message: parts.join(" — ") };
+}
+
+export interface SubtitleRequest {
+  /** One download row (a movie, an episode, or a season pack). */
+  downloadId?: string;
+  /** A whole title by TMDB id — every season unless `season` narrows it. */
+  tmdbId?: number;
+  season?: number;
+}
+
+/**
+ * Queue an on-demand subtitle fetch for what someone actually wants to watch.
+ *
+ * This is the path that matters when automatic fetching is off: providers have
+ * small daily quotas, so spending them on a request beats spending them on a
+ * library-wide sweep. Scoped to the caller's own library unless they're an admin.
+ */
+export async function requestSubtitles(
+  req: SubtitleRequest,
+  actor: { userId: string; isAdmin: boolean },
+): Promise<{ ok: boolean; queued: number; message: string }> {
+  const cfg = await getConfig();
+  if (!cfg.subtitles.enabled) {
+    return { ok: false, queued: 0, message: "Subtitles are switched off for this server." };
+  }
+  if (!cfg.s3.endpoint || !cfg.s3.bucket) {
+    return { ok: false, queued: 0, message: "Storage isn't configured." };
+  }
+
+  const mine = actor.isAdmin ? {} : { userId: actor.userId };
+  const scope: Prisma.DownloadWhereInput = req.downloadId
+    ? { id: req.downloadId }
+    : req.tmdbId != null
+      ? { tmdbId: req.tmdbId, ...(req.season != null ? { season: req.season } : {}) }
+      : {};
+  if (!Object.keys(scope).length) {
+    return { ok: false, queued: 0, message: "Nothing specified." };
+  }
+
+  const rows = await prisma.download.findMany({
+    where: {
+      ...scope,
+      ...mine,
+      status: "COMPLETED",
+      s3Key: { not: null },
+      s3DeletedAt: null,
+      kind: { in: ["MOVIE", "TV"] },
+    },
+    select: { id: true, title: true, subsLangs: true },
+  });
+  if (!rows.length) {
+    return { ok: false, queued: 0, message: "Not in your library (or not finished downloading yet)." };
+  }
+
+  // Skip anything already covered in every configured language — a request
+  // shouldn't spend quota re-fetching what's there.
+  const wanted = cfg.subtitles.languages;
+  const todo = rows.filter((r) => {
+    const have = new Set((r.subsLangs ?? "").split(",").filter(Boolean));
+    return wanted.some((l) => !have.has(l));
+  });
+  if (!todo.length) {
+    return {
+      ok: true,
+      queued: 0,
+      message: `Already has ${wanted.join(", ")} subtitles.`,
+    };
+  }
+
+  // Asking again clears the backoff: an explicit request should retry now, even
+  // for a title that came up empty before.
+  await prisma.download
+    .updateMany({ where: { id: { in: todo.map((r) => r.id) } }, data: { subsAttempts: 0 } })
+    .catch(() => {});
+  for (const r of todo) await enqueueSubtitleFetch(r.id).catch(() => {});
+
+  const what = todo.length === 1 ? `“${todo[0].title}”` : `${todo.length} items`;
+  void logActivity(`💬 Subtitles requested for ${what}`, { kind: "info", title: todo[0].title });
+  return {
+    ok: true,
+    queued: todo.length,
+    message: `Looking for ${wanted.join(", ")} subtitles for ${what} — this runs in the background.`,
+  };
+}
+
+/** What the UI needs to decide whether to offer a subtitle request. */
+export async function subtitleSettings(): Promise<{
+  enabled: boolean;
+  autoNew: boolean;
+  autoSweep: boolean;
+  languages: string[];
+  providers: string[];
+}> {
+  const cfg = await getConfig();
+  return {
+    enabled: cfg.subtitles.enabled,
+    autoNew: cfg.subtitles.autoNew,
+    autoSweep: cfg.subtitles.autoSweep,
+    languages: cfg.subtitles.languages,
+    providers: buildProviders(cfg).map((p) => p.name),
+  };
 }

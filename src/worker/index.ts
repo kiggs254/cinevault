@@ -693,8 +693,11 @@ async function processDownload(id: string): Promise<void> {
   await publishProgress({ type: "status", downloadId: id, status: "COMPLETED", progress: 100 });
   void pokeJellyfinScan(cfg); // index the new file in Jellyfin promptly
   // Subtitles run on the grab pool so they never hold a transfer slot. One fetch
-  // covers every member riding on this same S3 object.
-  if (cfg.subtitles.enabled) await enqueueSubtitleFetch(id).catch(() => {});
+  // covers every member riding on this same S3 object. With automatic fetching
+  // switched off, subtitles only ever arrive when someone asks for them.
+  if (cfg.subtitles.enabled && cfg.subtitles.autoNew) {
+    await enqueueSubtitleFetch(id).catch(() => {});
+  }
   const seLabel =
     organized.season != null
       ? ` S${String(organized.season).padStart(2, "0")}${organized.episode != null ? `E${String(organized.episode).padStart(2, "0")}` : ""}`
@@ -811,6 +814,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   "wanted-scan": scanWantedMovies,
   retention: runRetention,
   "subtitle-sweep": sweepSubtitles,
+  "subtitle-backfill": () => sweepSubtitles({ manual: true }),
 };
 
 // Transfer worker: only the actual downloads (qBittorrent → S3). Kept on its own
@@ -893,13 +897,15 @@ const grabWorker = new Worker<DownloadJobData>(
         // The subtitle sweep works in bounded batches so it can never hammer a
         // provider. While a backlog remains (first run over an existing library),
         // chain the next batch instead of waiting for the next scheduled tick.
-        if (job.name === "subtitle-sweep") {
+        if (job.name === "subtitle-sweep" || job.name === "subtitle-backfill") {
           const r = s as { remaining?: number; deferred?: number } | undefined;
           // Chaining only helps while we can still spend quota. If a provider's
           // daily cap stopped the pass, the 2-hourly schedule picks it up once
           // the cooldown has expired.
           if ((r?.remaining ?? 0) > 0 && !(r?.deferred ?? 0)) {
-            await enqueueJob("subtitle-sweep", { delayMs: 60_000 });
+            await enqueueJob(job.name as "subtitle-sweep" | "subtitle-backfill", {
+              delayMs: 60_000,
+            });
           }
         }
       } catch (e) {

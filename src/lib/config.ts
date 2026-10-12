@@ -38,7 +38,9 @@ export interface ResolvedConfig {
   };
   jellyfin: { url?: string; publicUrl?: string; apiKey?: string; userId?: string };
   subtitles: {
-    enabled: boolean;
+    enabled: boolean; // master switch — off means no subtitles at all, requests included
+    autoNew: boolean; // fetch automatically as each download finishes
+    autoSweep: boolean; // background backfill of the existing library
     languages: string[]; // lowercase ISO-639-1 codes, e.g. ["en", "sw"]
     hearingImpaired: boolean;
     subdlApiKey?: string;
@@ -196,6 +198,8 @@ export async function getConfig(): Promise<ResolvedConfig> {
     },
     subtitles: {
       enabled: settings.subtitlesEnabled !== false, // default ON
+      autoNew: settings.subtitlesAutoNew !== false, // default ON
+      autoSweep: settings.subtitlesAutoSweep !== false, // default ON
       languages: parseLangs(
         str(settings.subtitleLanguages) ?? env.SUBTITLE_LANGUAGES ?? "en",
       ),

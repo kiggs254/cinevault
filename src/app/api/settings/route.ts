@@ -24,7 +24,8 @@ const ALLOWED_SETTINGS = new Set([
   "jellyfinUrl", "jellyfinPublicUrl", "jellyfinUserId", "telegramChatId", "telegramAllowedIds",
   "autoDeleteWatched", "retentionDays", "autoDeleteIdle", "idleDays", "maxStorageGB", "autoFollowFromJellyfin",
   "registrationEnabled", "registrationCode",
-  "subtitlesEnabled", "subtitleLanguages", "subtitlesHearingImpaired", "opensubtitlesUsername",
+  "subtitlesEnabled", "subtitlesAutoNew", "subtitlesAutoSweep",
+  "subtitleLanguages", "subtitlesHearingImpaired", "opensubtitlesUsername",
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
@@ -65,6 +66,8 @@ export async function PUT(req: Request) {
   if ("idleDays" in patch) patch.idleDays = Math.max(1, Number(patch.idleDays) || 60);
   if ("maxStorageGB" in patch) patch.maxStorageGB = Math.max(0, Number(patch.maxStorageGB) || 0);
   if ("subtitlesEnabled" in patch) patch.subtitlesEnabled = Boolean(patch.subtitlesEnabled);
+  if ("subtitlesAutoNew" in patch) patch.subtitlesAutoNew = Boolean(patch.subtitlesAutoNew);
+  if ("subtitlesAutoSweep" in patch) patch.subtitlesAutoSweep = Boolean(patch.subtitlesAutoSweep);
   if ("subtitlesHearingImpaired" in patch) {
     patch.subtitlesHearingImpaired = Boolean(patch.subtitlesHearingImpaired);
   }
@@ -155,7 +158,7 @@ export async function POST(req: Request) {
         }
         // The sweep runs on the worker in bounded batches and chains itself until
         // the backlog is clear, so this just kicks off the first one.
-        await enqueueJob("subtitle-sweep");
+        await enqueueJob("subtitle-backfill");
         return NextResponse.json({
           ok: true,
           message: `Backfilling ${pending} of ${total} title(s) — runs in the background`,

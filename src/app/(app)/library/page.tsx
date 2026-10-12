@@ -6,6 +6,7 @@ import { overallProgress } from "@/lib/progress";
 import { jsonFetch } from "@/lib/client";
 import { formatBytes } from "@/lib/util";
 import { EpisodeBrowser } from "@/components/episode-browser";
+import { SubtitlesPanel } from "@/components/subtitles-panel";
 import { useConfirm } from "@/components/confirm-dialog";
 import { useLiveRefresh } from "@/components/use-live-refresh";
 
@@ -18,6 +19,8 @@ interface Item {
   progress: number;
   sizeBytes: number;
   s3Key: string | null;
+  subs: string | null;
+  subsChecked: boolean;
 }
 interface TitleGroup {
   key: string;
@@ -30,6 +33,7 @@ interface TitleGroup {
   count: number;
   downloading: boolean;
   sizeBytes: number;
+  subsReady: number;
   items: Item[];
 }
 
@@ -156,6 +160,23 @@ export default function LibraryPage() {
     } catch {
       setErr("Not on Jellyfin yet — give the library a minute to catch up.");
     }
+  }
+
+  /** Refetch the library and keep the open title in sync with it. */
+  const refreshActive = useCallback(async () => {
+    try {
+      const d = await jsonFetch<{ titles: TitleGroup[] }>("/api/library/titles");
+      setTitles(d.titles);
+      setActive((cur) => (cur ? d.titles.find((t) => t.key === cur.key) ?? cur : null));
+    } catch {
+      /* the next poll catches up */
+    }
+  }, []);
+
+  /** Subtitles arrive from a background job — look again once it's had time to run. */
+  function afterSubtitleRequest() {
+    void refreshActive();
+    setTimeout(() => void refreshActive(), 25_000);
   }
 
   /** Remove the given download rows from the library (confirmed), then refresh in place. */
@@ -343,6 +364,14 @@ export default function LibraryPage() {
                 <p className="mt-2 text-center text-[11px] text-faint">Opens in the Jellyfin app / web player.</p>
               </div>
             )}
+            {active.count > 0 && (
+              <SubtitlesPanel
+                kind={active.kind}
+                tmdbId={active.tmdbId}
+                items={active.items}
+                onRequested={afterSubtitleRequest}
+              />
+            )}
             {active.kind === "TV" && active.tmdbId ? (
               <div className="p-4">
                 <EpisodeBrowser
@@ -388,7 +417,15 @@ export default function LibraryPage() {
                       <FolderOpen size={15} className="flex-none text-faint" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm text-ink">{epLabel(i)}</p>
-                        <p className="mono truncate text-[11px] text-faint">{formatBytes(i.sizeBytes)}</p>
+                        <p className="mono truncate text-[11px] text-faint">
+                          {formatBytes(i.sizeBytes)}
+                          {i.s3Key &&
+                            (i.subs
+                              ? ` · subs: ${i.subs.toUpperCase()}`
+                              : i.subsChecked
+                                ? " · no subs found"
+                                : " · subs pending")}
+                        </p>
                       </div>
                       {i.s3Key && (
                         <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => open(i.s3Key!)} title="Open / stream">

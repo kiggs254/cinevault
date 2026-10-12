@@ -33,6 +33,10 @@ interface Item {
   progress: number;
   sizeBytes: number;
   s3Key: string | null;
+  /** Subtitle languages stored for this file, e.g. "en" — null = none yet. */
+  subs: string | null;
+  /** Whether subtitles have ever been looked for (false = still queued). */
+  subsChecked: boolean;
 }
 interface Group {
   key: string;
@@ -45,6 +49,7 @@ interface Group {
   count: number; // ready-to-watch files
   downloading: boolean; // any part still being added
   sizeBytes: number;
+  subsReady: number; // ready files that have subtitles
   items: Item[];
 }
 
@@ -85,6 +90,7 @@ export async function GET() {
         count: 0,
         downloading: false,
         sizeBytes: 0,
+        subsReady: 0,
         items: [],
       };
       groups.set(key, g);
@@ -109,6 +115,8 @@ export async function GET() {
       progress: d.progress,
       sizeBytes: Number(d.sizeBytes),
       s3Key: d.s3Key,
+      subs: d.subsLangs,
+      subsChecked: d.subsCheckedAt != null,
     };
     const eps = epMaps.get(key)!;
     const cur = eps.get(epKey);
@@ -116,9 +124,15 @@ export async function GET() {
       eps.set(epKey, { item, ready, active });
     } else {
       // Prefer a ready row; among ready, the larger file.
+      // Two members' rows can point at the same file; keep whichever knows about
+      // subtitles so a shared file isn't shown as having none.
+      const subs = cur.item.subs ?? item.subs;
+      const subsChecked = cur.item.subsChecked || item.subsChecked;
       if ((ready && !cur.ready) || (ready === cur.ready && item.sizeBytes > cur.item.sizeBytes)) {
         cur.item = item;
       }
+      cur.item.subs = subs;
+      cur.item.subsChecked = subsChecked;
       cur.ready = cur.ready || ready;
       cur.active = cur.active || active;
     }
@@ -130,6 +144,7 @@ export async function GET() {
     g.count = aggs.filter((a) => a.ready).length; // distinct ready episodes
     g.downloading = aggs.some((a) => !a.ready && a.active);
     g.sizeBytes = aggs.filter((a) => a.ready).reduce((s, a) => s + a.item.sizeBytes, 0);
+    g.subsReady = aggs.filter((a) => a.ready && a.item.subs).length;
   }
 
   const titles = [...groups.values()];

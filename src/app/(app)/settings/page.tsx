@@ -99,11 +99,13 @@ const SECTIONS: Section[] = [
   {
     group: "media",
     title: "Subtitles",
-    desc: "Every finished download gets subtitles automatically, and a background sweep backfills everything already in your library. Subtitles are stored beside each video in S3 as \"<file>.en.srt\", which Jellyfin picks up with no plugin. Subtitles bundled inside a release are matched and renamed first (free); anything missing is fetched from SubDL and OpenSubtitles. A free SubDL key (subdl.com → account) carries the bulk work; OpenSubtitles is an optional second source with a small daily quota unless you add your username + password.",
+    desc: "Members can request subtitles for a movie, a whole show, or a single season from its Library page. Optionally, finished downloads also get them automatically, and a background sweep backfills everything already in your library — switch those off to spend the providers' small daily quotas only on what people actually ask for. Subtitles are stored beside each video in S3 as \"<file>.en.srt\", which Jellyfin picks up with no plugin. Subtitles bundled inside a release are matched and renamed first (free); anything missing is fetched from SubDL and OpenSubtitles. A free SubDL key (subdl.com → account) carries the bulk work; OpenSubtitles is an optional second source with a small daily quota unless you add your username + password.",
     test: "subtitles",
     actions: [{ key: "fetchSubtitles", label: "Backfill now" }],
     fields: [
-      { k: "subtitlesEnabled", label: "Auto-download subtitles for everything", type: "toggle" },
+      { k: "subtitlesEnabled", label: "Subtitles (master switch — off disables requests too)", type: "toggle" },
+      { k: "subtitlesAutoNew", label: "Automatically fetch subtitles for new downloads", type: "toggle" },
+      { k: "subtitlesAutoSweep", label: "Automatically backfill the existing library in the background", type: "toggle" },
       { k: "subtitleLanguages", label: "Languages (comma-separated, e.g. en,sw)", type: "text", placeholder: "en" },
       { k: "subtitlesHearingImpaired", label: "Prefer hearing-impaired (SDH) subtitles", type: "toggle" },
       { k: "subdlApiKey", label: "SubDL API key", type: "secret" },
@@ -179,6 +181,8 @@ const DEFAULTS: Settings = {
   idleDays: 60,
   maxStorageGB: 0,
   subtitlesEnabled: true,
+  subtitlesAutoNew: true,
+  subtitlesAutoSweep: true,
   subtitleLanguages: "en",
   subtitlesHearingImpaired: false,
 };
