@@ -49,6 +49,8 @@ export interface SubtitleProvider {
   find(q: SubtitleQuery): Promise<SubtitleResult | null>;
   /** True while cooling off (quota spent, rate-limited, or a rejected key). */
   blocked(): boolean;
+  /** Milliseconds until this provider is usable again (0 when it already is). */
+  cooldownMs(): number;
   /** Search-only credential check for the Settings "Test" button (spends no download quota). */
   probe(): Promise<{ ok: boolean; message: string }>;
 }
@@ -69,7 +71,11 @@ abstract class BaseProvider implements SubtitleProvider {
   protected abstract readonly minIntervalMs: number;
 
   blocked(): boolean {
-    return Date.now() < (cooldownUntil.get(this.name) ?? 0);
+    return this.cooldownMs() > 0;
+  }
+
+  cooldownMs(): number {
+    return Math.max(0, (cooldownUntil.get(this.name) ?? 0) - Date.now());
   }
 
   protected block(ms: number, why: string): void {
@@ -120,15 +126,33 @@ function probeQuery(): SubtitleQuery {
 /** How many candidates we'll actually download before giving up on a query. */
 const MAX_TRIES = 3;
 
-async function getBuffer(url: string, headers?: Record<string, string>): Promise<Buffer | null> {
+interface Fetched {
+  /** 0 when the request never completed. */
+  status: number;
+  body: Buffer | null;
+  /** Error body (truncated), so a refusal can be told apart from a dead link. */
+  text: string | null;
+}
+
+/**
+ * Fetch a subtitle file. Returns the status as well as the bytes: these sites
+ * enforce their daily cap on the DOWNLOAD host, so "no bytes" has to be
+ * distinguishable from "quota spent" — treating the latter as a miss is what
+ * marked a whole library as having no subtitles available.
+ */
+async function getBytes(url: string, headers?: Record<string, string>): Promise<Fetched> {
   const res = await fetch(url, {
     headers: { "User-Agent": USER_AGENT, ...headers },
     signal: AbortSignal.timeout(30_000),
   }).catch(() => null);
-  if (!res || !res.ok) return null;
+  if (!res) return { status: 0, body: null, text: null };
+  if (!res.ok) {
+    const text = await res.text().catch(() => null);
+    return { status: res.status, body: null, text: text?.slice(0, 400) ?? null };
+  }
   const len = Number(res.headers.get("content-length") ?? 0);
-  if (len > 8 * 1024 * 1024) return null;
-  return Buffer.from(await res.arrayBuffer());
+  if (len > 8 * 1024 * 1024) return { status: res.status, body: null, text: null };
+  return { status: res.status, body: Buffer.from(await res.arrayBuffer()), text: null };
 }
 
 /** Turn a downloaded archive-or-file body into a validated subtitle. */
@@ -231,6 +255,32 @@ export class SubdlProvider extends BaseProvider {
     return Array.isArray(json.subtitles) ? json.subtitles : [];
   }
 
+  /**
+   * Note a refused subtitle download. SubDL's free tier allows 50 downloads a
+   * day and enforces it on dl.subdl.com with a 429 + `retryAfterSeconds`, while
+   * search keeps working — so this is the only place the cap shows up. Returns
+   * true when the provider has been put on cooldown.
+   */
+  private noteRefusal(res: Fetched): boolean {
+    if (res.status !== 429 && res.status !== 403) return false;
+    let seconds = 0;
+    let why = `download refused (${res.status})`;
+    try {
+      const j = JSON.parse(res.text ?? "{}") as {
+        error?: string;
+        message?: string;
+        retryAfterSeconds?: number;
+      };
+      if (typeof j.retryAfterSeconds === "number") seconds = j.retryAfterSeconds;
+      why = j.message ?? j.error ?? why;
+    } catch {
+      /* not JSON — fall back to a plain cooldown */
+    }
+    const ms = Math.min(Math.max(seconds * 1000, 15 * 60_000), 25 * 3600_000);
+    this.block(ms, why);
+    return true;
+  }
+
   async probe(): Promise<{ ok: boolean; message: string }> {
     const items = await this.search(probeQuery());
     if (this.blocked()) return { ok: false, message: "SubDL: key rejected or rate-limited" };
@@ -270,9 +320,14 @@ export class SubdlProvider extends BaseProvider {
             ? (c.raw.url as string)
             : `https://dl.subdl.com${c.raw.url}`;
       await this.pace();
-      const body = await getBuffer(link);
-      if (!body) continue;
-      const got = extractSubtitle(body, c.raw.url ?? c.raw.name ?? "sub.zip", q);
+      const dl = await getBytes(link);
+      if (!dl.body) {
+        // A refused download is about the ACCOUNT, not this subtitle — stop
+        // asking, so the sweep sees the provider as unavailable and defers.
+        if (this.noteRefusal(dl)) break;
+        continue;
+      }
+      const got = extractSubtitle(dl.body, c.raw.url ?? c.raw.name ?? "sub.zip", q);
       if (got) return { provider: this.name, ext: got.ext, text: got.text, release: c.release };
     }
     return null;
@@ -523,9 +578,9 @@ export class OpenSubtitlesProvider extends BaseProvider {
       if (!fileId) continue;
       const dl = await this.link(fileId);
       if (!dl) continue;
-      const body = await getBuffer(dl.url);
-      if (!body) continue;
-      const got = extractSubtitle(body, dl.name, q);
+      const file = await getBytes(dl.url);
+      if (!file.body) continue;
+      const got = extractSubtitle(file.body, dl.name, q);
       if (got) return { provider: this.name, ext: got.ext, text: got.text, release: c.release };
     }
     return null;

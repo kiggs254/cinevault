@@ -98,9 +98,21 @@ export interface SubtitleFetchResult {
   covered: string[];
   /** True when every video has every requested language. */
   complete: boolean;
+  /**
+   * True when something was left untried because every provider was cooling off
+   * (daily quota spent). The row's state is NOT advanced in that case: "missing"
+   * would say nothing about whether a subtitle exists.
+   */
+  deferred: boolean;
 }
 
-const EMPTY: SubtitleFetchResult = { added: 0, adopted: 0, covered: [], complete: true };
+const EMPTY: SubtitleFetchResult = {
+  added: 0,
+  adopted: 0,
+  covered: [],
+  complete: true,
+  deferred: false,
+};
 
 /**
  * Ensure every video of one download has a sidecar for each configured language.
@@ -142,6 +154,7 @@ export async function fetchSubtitlesForDownload(
   const renamed: { from: string; to: string }[] = [];
   let added = 0;
   let adopted = 0;
+  let deferred = false;
   // How many of this row's videos each language is satisfied for.
   const coverage = new Map<string, number>(langs.map((l) => [l, 0]));
   // Shipped-but-misnamed subtitles still up for grabs. Seeded from the download's
@@ -183,6 +196,12 @@ export async function fetchSubtitlesForDownload(
 
       // 2. Fetch from the providers.
       if (!providers.length) continue;
+      if (providers.every((p) => p.blocked())) {
+        // Every provider is out of quota. Leave this one alone rather than
+        // banking a miss we didn't earn.
+        deferred = true;
+        continue;
+      }
       const got = await fetchFromProviders(providers, {
         kind: row.kind === "TV" ? "TV" : "MOVIE",
         title: row.title,
@@ -224,7 +243,9 @@ export async function fetchSubtitlesForDownload(
 
   const covered = langs.filter((l) => (coverage.get(l) ?? 0) >= targets.length);
   const complete = covered.length === langs.length;
-  await markChecked(row, covered, complete, { newKeys, renamed });
+  // Whatever we stored is recorded either way; the "checked" bookkeeping only
+  // advances when the gap we found was real and not a quota outage.
+  await markChecked(row, covered, complete, { newKeys, renamed }, deferred && !complete);
 
   if (added || adopted) {
     const what = [
@@ -239,7 +260,7 @@ export async function fetchSubtitlesForDownload(
       title: row.title,
     });
   }
-  return { added, adopted, covered, complete };
+  return { added, adopted, covered, complete, deferred };
 }
 
 /**
@@ -252,12 +273,17 @@ async function markChecked(
   covered: string[],
   complete: boolean,
   changes?: { newKeys: string[]; renamed: { from: string; to: string }[] },
+  deferred = false,
 ): Promise<void> {
-  const data: Prisma.DownloadUpdateInput = {
-    subsCheckedAt: new Date(),
-    subsLangs: covered.length ? covered.join(",") : null,
-    subsAttempts: complete ? 0 : row.subsAttempts + 1,
-  };
+  // A deferred row keeps its existing state, so a provider outage can never
+  // look like "this title has no subtitles".
+  const data: Prisma.DownloadUpdateInput = deferred
+    ? {}
+    : {
+        subsCheckedAt: new Date(),
+        subsLangs: covered.length ? covered.join(",") : null,
+        subsAttempts: complete ? 0 : row.subsAttempts + 1,
+      };
 
   if (changes && (changes.newKeys.length || changes.renamed.length)) {
     const meta = metaRecord(row.metadata);
@@ -270,11 +296,13 @@ async function markChecked(
     } as unknown as Prisma.InputJsonValue;
   }
 
-  await prisma.download.update({ where: { id: row.id }, data }).catch(() => {});
+  if (Object.keys(data).length) {
+    await prisma.download.update({ where: { id: row.id }, data }).catch(() => {});
+  }
 
   // Other members' rows share the exact same S3 object — mirror the verdict so
   // the sweep doesn't re-check the same files once per member.
-  if (row.s3Key) {
+  if (row.s3Key && !deferred) {
     await prisma.download
       .updateMany({
         where: { s3Key: row.s3Key, s3DeletedAt: null, id: { not: row.id } },
@@ -305,10 +333,12 @@ export async function sweepSubtitles(): Promise<{
   added: number;
   adopted: number;
   remaining: number;
+  /** Titles left untried because every provider is out of quota. */
+  deferred: number;
 }> {
   const cfg = await getConfig();
   if (!cfg.subtitles.enabled || !cfg.s3.endpoint || !cfg.s3.bucket) {
-    return { titles: 0, added: 0, adopted: 0, remaining: 0 };
+    return { titles: 0, added: 0, adopted: 0, remaining: 0, deferred: 0 };
   }
   const langs = cfg.subtitles.languages;
   const wanted = new Set(langs);
@@ -344,17 +374,24 @@ export async function sweepSubtitles(): Promise<{
 
   let added = 0;
   let adopted = 0;
+  let processed = 0;
+  let deferred = 0;
   for (const r of batch) {
-    // All providers cooling off (quota spent) → stop; adoption-only passes still
-    // make progress, so keep going when there were never any providers at all.
+    // Every provider out of quota → stop. The titles left are untouched, not
+    // marked as having no subtitles, so the next window retries them for real.
     if (providers.length && providers.every((p) => p.blocked())) {
-      console.log("[subs] all providers cooling off — ending this sweep early");
+      deferred = batch.length - processed;
       break;
     }
+    processed++;
     try {
       const res = await fetchSubtitlesForDownload(r.id, { cfg, providers, index });
       added += res.added;
       adopted += res.adopted;
+      if (res.deferred && !res.complete) {
+        deferred += 1;
+        processed -= 1;
+      }
     } catch (e) {
       console.error(`[subs] sweep failed for ${r.title}:`, (e as Error).message);
       // Still record the attempt: the sweep's backlog must shrink every pass, or
@@ -369,19 +406,29 @@ export async function sweepSubtitles(): Promise<{
   }
 
   if (added || adopted) await triggerLibraryScan(cfg.jellyfin).catch(() => {});
-  const remaining = Math.max(0, due.length - batch.length);
+  const remaining = Math.max(0, due.length - batch.length) + deferred;
+
+  // Say out loud when a provider's daily cap is what stopped us — otherwise a
+  // paused backfill is indistinguishable from a finished one.
+  if (deferred) {
+    const wait = Math.max(...providers.map((p) => p.cooldownMs()), 0);
+    const hrs = wait > 0 ? ` Retrying in ~${Math.max(1, Math.round(wait / 3600_000))}h.` : "";
+    const msg = `Subtitle provider daily limit reached — ${remaining} title(s) still queued.${hrs}`;
+    console.log(`[subs] ${msg}`);
+    void logActivity(`💬 ${msg}`, { kind: "info" });
+  }
   // One line per batch in the activity feed, so a backfill is visibly running
   // even when a batch of titles turns up nothing (the per-title lines only
   // appear for titles that actually gained subtitles).
-  if (batch.length) {
+  if (processed && !deferred) {
     const got = added + adopted;
     void logActivity(
-      `💬 Subtitles: checked ${batch.length} title(s), added ${got}` +
+      `💬 Subtitles: checked ${processed} title(s), added ${got}` +
         (remaining ? ` — ${remaining} to go` : " — library is up to date"),
       { kind: "info" },
     );
   }
-  return { titles: batch.length, added, adopted, remaining };
+  return { titles: processed, added, adopted, remaining, deferred };
 }
 
 /** Library titles still missing at least one configured language. */
@@ -424,5 +471,11 @@ export async function checkSubtitleProviders(): Promise<{ ok: boolean; message: 
   }
   const results = await Promise.all(providers.map((p) => p.probe()));
   const ok = results.some((r) => r.ok);
-  return { ok, message: `${results.map((r) => r.message).join(" · ")} — ${backlog}` };
+  // A provider can be reachable but out of downloads for the day — the single
+  // most common reason a backfill looks stuck.
+  const waiting = providers
+    .filter((p) => p.blocked())
+    .map((p) => `${p.name} is at its daily limit (~${Math.max(1, Math.round(p.cooldownMs() / 3600_000))}h left)`);
+  const parts = [results.map((r) => r.message).join(" · "), ...waiting, backlog];
+  return { ok, message: parts.join(" — ") };
 }

@@ -894,8 +894,13 @@ const grabWorker = new Worker<DownloadJobData>(
         // provider. While a backlog remains (first run over an existing library),
         // chain the next batch instead of waiting for the next scheduled tick.
         if (job.name === "subtitle-sweep") {
-          const remaining = (s as { remaining?: number } | undefined)?.remaining ?? 0;
-          if (remaining > 0) await enqueueJob("subtitle-sweep", { delayMs: 60_000 });
+          const r = s as { remaining?: number; deferred?: number } | undefined;
+          // Chaining only helps while we can still spend quota. If a provider's
+          // daily cap stopped the pass, the 2-hourly schedule picks it up once
+          // the cooldown has expired.
+          if ((r?.remaining ?? 0) > 0 && !(r?.deferred ?? 0)) {
+            await enqueueJob("subtitle-sweep", { delayMs: 60_000 });
+          }
         }
       } catch (e) {
         console.error(`[grab] ${job.name} error:`, (e as Error).message);
