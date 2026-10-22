@@ -76,6 +76,21 @@ function peopleNames(item: any): string[] {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** Resolve the user id to query watch state for (config, else first user). */
+/**
+ * JellyBridge's "Request" library is placeholder videos, not real viewing: a
+ * member who plays one has watched a 10-second promo, not the title. Anything
+ * under its directory must never count as a watch (auto-follow would download a
+ * whole show off a promo clip) or as the title itself ("Play on Jellyfin" would
+ * open the promo instead of the movie).
+ */
+const PLACEHOLDER_ROOT = `${(process.env.JELLYBRIDGE_DIR || "/jellybridge").replace(/\/+$/, "")}/`;
+
+/** True for an item that lives in JellyBridge's placeholder library (needs Fields=Path). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isPlaceholderItem(item: any): boolean {
+  return typeof item?.Path === "string" && item.Path.startsWith(PLACEHOLDER_ROOT);
+}
+
 export async function resolveUserId(cfg: JellyfinConfig): Promise<string | null> {
   if (cfg.userId) return cfg.userId;
   const users = await jf<Array<{ Id: string }>>(cfg, "/Users");
@@ -93,13 +108,13 @@ export async function getPlayedTitles(
     Recursive: "true",
     IncludeItemTypes: "Movie,Series",
     Filters: "IsPlayed",
-    Fields: "Genres,People,ProductionYear,UserData,ProviderIds",
+    Fields: "Genres,People,ProductionYear,UserData,ProviderIds,Path",
     SortBy: "DatePlayed",
     SortOrder: "Descending",
     Limit: String(limit),
   });
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  return (data?.Items ?? []).map((it: any) => ({
+  return (data?.Items ?? []).filter((it) => !isPlaceholderItem(it)).map((it: any) => ({
     jellyfinId: it.Id,
     name: it.Name,
     type: it.Type === "Series" ? "Series" : "Movie",
@@ -132,12 +147,12 @@ export async function getWatchedEpisodes(cfg: JellyfinConfig): Promise<WatchedEp
   const seriesData = await jf<{ Items?: Record<string, unknown>[] }>(cfg, `/Users/${userId}/Items`, {
     Recursive: "true",
     IncludeItemTypes: "Series",
-    Fields: "ProviderIds",
+    Fields: "ProviderIds,Path",
     Limit: "500",
   });
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const seriesTmdb = new Map<string, number>();
-  for (const s of seriesData?.Items ?? []) {
+  for (const s of (seriesData?.Items ?? []).filter((it) => !isPlaceholderItem(it))) {
     const tid = providerTmdb(s);
     if (tid) seriesTmdb.set((s as any).Id, tid);
   }
@@ -145,10 +160,11 @@ export async function getWatchedEpisodes(cfg: JellyfinConfig): Promise<WatchedEp
     Recursive: "true",
     IncludeItemTypes: "Episode",
     Filters: "IsPlayed",
-    Fields: "UserData,SeriesId,ParentIndexNumber,IndexNumber",
+    Fields: "UserData,SeriesId,ParentIndexNumber,IndexNumber,Path",
     Limit: "1000",
   });
   return (eps?.Items ?? [])
+    .filter((e) => !isPlaceholderItem(e))
     .map((e: any) => ({
       seriesTmdbId: e.SeriesId ? seriesTmdb.get(e.SeriesId) : undefined,
       seriesName: e.SeriesName ?? "",

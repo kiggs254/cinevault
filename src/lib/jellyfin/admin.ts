@@ -1,5 +1,5 @@
 import type { JellyfinConfig } from "./client";
-import { resolveUserId } from "./client";
+import { resolveUserId, isPlaceholderItem } from "./client";
 
 /**
  * Admin (write) operations against Jellyfin, using the server-wide Dashboard API
@@ -146,11 +146,13 @@ export async function findItemIdByTmdb(
   const res = await jfetch(
     cfg,
     "GET",
-    `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${itemType}&Fields=ProviderIds&Limit=10000`,
+    `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${itemType}&Fields=ProviderIds,Path&Limit=10000`,
   );
   const items = res.data?.Items;
   if (!Array.isArray(items)) return null;
   for (const it of items) {
+    // A JellyBridge placeholder shares the TMDB id but is a promo clip.
+    if (isPlaceholderItem(it)) continue;
     if (providerTmdb(it) === tmdbId) {
       itemCache.set(cacheKey, String(it.Id));
       return String(it.Id);
