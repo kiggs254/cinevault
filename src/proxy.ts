@@ -5,7 +5,8 @@ import { jwtVerify } from "jose";
 const PUBLIC_PAGES = ["/login", "/register", "/welcome"];
 // The live-TV M3U/EPG feeds are fetched by Jellyfin with no session cookie; they
 // enforce their own `?key=` bearer at the handler (mismatch → 404), so they must
-// bypass the session gate here.
+// bypass the session gate here. Likewise Seerr's webhook, which the handler
+// authenticates with a shared secret (Authorization header, constant-time).
 const PUBLIC_API = [
   "/api/auth/login",
   "/api/auth/register",
@@ -13,6 +14,7 @@ const PUBLIC_API = [
   "/api/health",
   "/api/livetv/m3u",
   "/api/livetv/epg",
+  "/api/integrations/seerr",
 ];
 
 const COOKIE = "moviehub_session";

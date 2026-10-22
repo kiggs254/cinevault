@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword } from "../password";
 import { encrypt, safeDecrypt } from "../crypto";
 import { jellyfinReady } from "../jellyfin/client";
 import { createJellyfinUser, setUserDisabled, deleteJellyfinUser } from "../jellyfin/admin";
+import { importJellyfinUsers, seerrReady } from "../seerr/client";
 import { notifyUser, notifyOwnerNewRegistration } from "../telegram/client";
 import { validInvite, consumeInvite } from "./invites";
 import type { User } from "@prisma/client";
@@ -153,6 +154,13 @@ export async function approveUser(id: string): Promise<ApproveResult> {
     where: { id },
     data: { status: "active", jellyfinUserId, approvedAt: new Date(), pendingSecret: null },
   });
+  // Without a Seerr account, JellyBridge can't file this member's ♥ requests.
+  // Best-effort: the periodic sync catches anything missed here.
+  if (seerrReady(cfg.seerr)) {
+    await importJellyfinUsers(cfg.seerr, [jellyfinUserId]).catch((e) =>
+      console.error("[seerr] import of new member failed:", (e as Error).message),
+    );
+  }
   await notifyUser(id, `✅ You're in! Your Cinevault + Jellyfin account “${user.username}” is ready.`, {
     buttons: [{ text: "Get set up", path: `/welcome?token=${user.statusToken}` }],
   }).catch(() => {});

@@ -39,6 +39,7 @@ import {
   subtitleCooldownMs,
   sweepSubtitles,
 } from "../lib/subtitles/service";
+import { fulfilTmdbRequest, syncSeerrUsers } from "../lib/seerr/service";
 import { organize } from "../lib/llm/organizer";
 import { enrich } from "../lib/metadata/tmdb";
 import { publishProgress } from "../lib/events";
@@ -822,6 +823,7 @@ const MAINTENANCE: Record<string, () => Promise<unknown>> = {
   retention: runRetention,
   "subtitle-sweep": sweepSubtitles,
   "subtitle-backfill": () => sweepSubtitles({ manual: true }),
+  "seerr-user-sync": syncSeerrUsers,
 };
 
 // Transfer worker: only the actual downloads (qBittorrent → S3). Kept on its own
@@ -917,6 +919,17 @@ const grabWorker = new Worker<DownloadJobData>(
         }
       } catch (e) {
         console.error(`[grab] ${job.name} error:`, (e as Error).message);
+      }
+      return;
+    }
+    // A title a member ♥'d in Jellyfin (JellyBridge → Seerr → webhook).
+    if (job.name === "tmdb-request" && job.data.tmdbRequest) {
+      const r = job.data.tmdbRequest;
+      try {
+        await fulfilTmdbRequest(r);
+        console.log(`[grab] tmdb-request ${r.mediaType} ${r.title} (seerr #${r.seerrRequestId ?? "-"}) handled`);
+      } catch (e) {
+        console.error(`[grab] tmdb-request ${r.title} failed:`, (e as Error).message);
       }
       return;
     }

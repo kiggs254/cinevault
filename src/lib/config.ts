@@ -49,6 +49,8 @@ export interface ResolvedConfig {
     osPassword?: string;
   };
   telegram: { botToken?: string; chatId?: string; allowedIds: string[] };
+  /** Seerr (Jellyseerr) — JellyBridge's ♥-to-request lands here, then reaches us by webhook. */
+  seerr: { url?: string; apiKey?: string; webhookSecret?: string };
   torbox: { apiKey?: string };
   liveTv: { key?: string; groupBySource: boolean }; // aggregated M3U/EPG for Jellyfin Live TV
   appUrl: string; // public base URL of this app (for deep-link CTAs)
@@ -75,6 +77,8 @@ const SECRET_KEYS = [
   "opensubtitlesPassword",
   "vapidPrivateKey",
   "liveTvKey",
+  "seerrApiKey",
+  "seerrWebhookSecret",
 ] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -215,6 +219,11 @@ export async function getConfig(): Promise<ResolvedConfig> {
       allowedIds: parseIds(str(settings.telegramAllowedIds) ?? env.TELEGRAM_ALLOWED_IDS),
     },
     torbox: { apiKey: dec("torboxApiKey") ?? env.TORBOX_API_KEY },
+    seerr: {
+      url: str(settings.seerrUrl) ?? env.SEERR_URL,
+      apiKey: dec("seerrApiKey") ?? env.SEERR_API_KEY,
+      webhookSecret: dec("seerrWebhookSecret") ?? env.SEERR_WEBHOOK_SECRET,
+    },
     liveTv: {
       key: dec("liveTvKey"),
       groupBySource: settings.liveTvGroupBySource !== false, // default on
@@ -264,6 +273,8 @@ export async function getMaskedConfig() {
     opensubtitlesPassword: !!env.OPENSUBTITLES_PASSWORD,
     vapidPrivateKey: !!env.VAPID_PRIVATE_KEY,
     liveTvKey: false, // no env fallback — self-generated on first use
+    seerrApiKey: !!env.SEERR_API_KEY,
+    seerrWebhookSecret: !!env.SEERR_WEBHOOK_SECRET,
   };
   const secretsSet = Object.fromEntries(
     SECRET_KEYS.map((k) => [k, !!secrets[k] || envSecretPresent[k]]),

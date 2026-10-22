@@ -144,12 +144,26 @@ export interface EpisodeGrabData {
   notify?: boolean;
   userId?: string | null;
 }
+/** A title requested from outside Cinevault (Jellyfin ♥ via Seerr), to download for a member. */
+export interface TmdbRequestData {
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  title: string;
+  year: number | null;
+  /** TV only: requested season numbers (empty = start at season 1). */
+  seasons: number[];
+  userId: string;
+  seerrRequestId?: number;
+}
+
 export interface DownloadJobData {
   downloadId: string;
   seasonGrab?: SeasonGrabData;
   episodeGrab?: EpisodeGrabData;
   /** subtitle-fetch only: how many times this fetch has waited out a provider quota. */
   subtitleRetry?: number;
+  /** tmdb-request only: what to download, and for whom. */
+  tmdbRequest?: TmdbRequestData;
 }
 
 export interface ProgressEvent {

@@ -98,6 +98,18 @@ const SECTIONS: Section[] = [
   },
   {
     group: "media",
+    title: "Requests from Jellyfin (JellyBridge + Seerr)",
+    desc: "Members press ♥ on a title in Jellyfin's Discover library; the JellyBridge plugin files it in Seerr, and Seerr's webhook hands it to Cinevault to download into that member's library. Seerr runs beside Jellyfin on the same Docker network (use http://seerr:5055). Point Seerr's Webhook notification at /api/integrations/seerr on this app, with the Authorization header set to \"Bearer <webhook secret>\".",
+    test: "seerr",
+    actions: [{ key: "seerrSync", label: "Sync members to Seerr" }],
+    fields: [
+      { k: "seerrUrl", label: "Seerr URL (internal)", type: "url", placeholder: "http://seerr:5055" },
+      { k: "seerrApiKey", label: "Seerr API key", type: "secret" },
+      { k: "seerrWebhookSecret", label: "Webhook secret (Seerr sends it as the Authorization header)", type: "secret" },
+    ],
+  },
+  {
+    group: "media",
     title: "Subtitles",
     desc: "Members can request subtitles for a movie, a whole show, or a single season from its Library page. Optionally, finished downloads also get them automatically, and a background sweep backfills everything already in your library — switch those off to spend the providers' small daily quotas only on what people actually ask for. Subtitles are stored beside each video in S3 as \"<file>.en.srt\", which Jellyfin picks up with no plugin. Subtitles bundled inside a release are matched and renamed first (free); anything missing is fetched from SubDL and OpenSubtitles. A free SubDL key (subdl.com → account) carries the bulk work; OpenSubtitles is an optional second source with a small daily quota unless you add your username + password.",
     test: "subtitles",

@@ -78,6 +78,12 @@ const schema = z.object({
   OPENSUBTITLES_PASSWORD: z.string().optional(),
   SUBTITLE_LANGUAGES: z.string().optional(), // e.g. "en" or "en,sw"
 
+  // Seerr (Jellyseerr): JellyBridge in Jellyfin turns a ♥ into a Seerr request,
+  // and Seerr's webhook hands it to us to download.
+  SEERR_URL: z.string().optional(), // internal, e.g. http://seerr:5055
+  SEERR_API_KEY: z.string().optional(),
+  SEERR_WEBHOOK_SECRET: z.string().optional(), // sent by Seerr as the Authorization header
+
   // Web Push (VAPID). Optional — self-generated + stored in the DB on first use.
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),

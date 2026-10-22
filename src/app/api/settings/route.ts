@@ -9,6 +9,8 @@ import { setJellyfinRequestLink, triggerLibraryScan } from "@/lib/jellyfin/admin
 import { repairMislabeledMedia } from "@/lib/service/downloads";
 import { checkSubtitleProviders, pendingSubtitleCount } from "@/lib/subtitles/service";
 import { enqueueJob } from "@/lib/queue";
+import { seerrReady, seerrStatus } from "@/lib/seerr/client";
+import { syncSeerrUsers } from "@/lib/seerr/service";
 import { getSessionUser, isAdmin } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -26,11 +28,13 @@ const ALLOWED_SETTINGS = new Set([
   "registrationEnabled", "registrationCode",
   "subtitlesEnabled", "subtitlesAutoNew", "subtitlesAutoSweep",
   "subtitleLanguages", "subtitlesHearingImpaired", "opensubtitlesUsername",
+  "seerrUrl",
 ]);
 const ALLOWED_SECRETS = new Set([
   "moonshotApiKey", "mimoApiKey", "qbitPassword", "prowlarrApiKey", "s3SecretAccessKey", "tmdbApiKey",
   "jellyfinApiKey", "telegramBotToken", "torboxApiKey",
   "subdlApiKey", "opensubtitlesApiKey", "opensubtitlesPassword",
+  "seerrApiKey", "seerrWebhookSecret",
 ]);
 
 /** Settings are admin-only. */
@@ -162,6 +166,20 @@ export async function POST(req: Request) {
         return NextResponse.json({
           ok: true,
           message: `Backfilling ${pending} of ${total} title(s) — runs in the background`,
+        });
+      }
+      case "seerr": {
+        if (!seerrReady(cfg.seerr)) throw new Error("Seerr URL + API key required");
+        const st = await seerrStatus(cfg.seerr);
+        const hook = cfg.seerr.webhookSecret ? "webhook secret set" : "⚠ no webhook secret — Seerr can't reach Cinevault";
+        return NextResponse.json({ ok: !!cfg.seerr.webhookSecret, message: `Seerr ${st.version ?? ""} reachable · ${hook}` });
+      }
+      case "seerrSync": {
+        if (!seerrReady(cfg.seerr)) throw new Error("Seerr URL + API key required");
+        const { imported } = await syncSeerrUsers();
+        return NextResponse.json({
+          ok: true,
+          message: imported ? `Added ${imported} member(s) to Seerr` : "Every member is already in Seerr",
         });
       }
       case "rescan": {

@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import { createRedis } from "./redis";
-import type { DownloadJobData, SeasonGrabData, EpisodeGrabData } from "./types";
+import type { DownloadJobData, SeasonGrabData, EpisodeGrabData, TmdbRequestData } from "./types";
 
 export const DOWNLOAD_QUEUE = "downloads";
 export const GRAB_QUEUE = "grabs";
@@ -96,6 +96,18 @@ export async function enqueueSubtitleFetch(
   );
 }
 
+/**
+ * Queue a title requested from Jellyfin (via Seerr) for download. Runs on the
+ * grab pool — a release search can take a while, and the webhook must answer fast.
+ */
+export async function enqueueTmdbRequest(data: TmdbRequestData): Promise<void> {
+  await grabQueue().add(
+    "tmdb-request",
+    { downloadId: "", tmdbRequest: data },
+    { removeOnComplete: true, removeOnFail: true },
+  );
+}
+
 /** Trigger any named maintenance job once (optionally after a delay). */
 export async function enqueueJob(
   name:
@@ -109,7 +121,8 @@ export async function enqueueJob(
     | "wanted-scan"
     | "season-backfill"
     | "subtitle-sweep"
-    | "subtitle-backfill",
+    | "subtitle-backfill"
+    | "seerr-user-sync",
   opts?: { delayMs?: number },
 ): Promise<void> {
   await grabQueue().add(
@@ -131,6 +144,7 @@ const REPEATABLES: { name: string; every: number; jobId: string }[] = [
   { name: "wanted-scan", every: 6 * HOUR, jobId: "wanted-scan-repeat" },
   { name: "season-backfill", every: 12 * HOUR, jobId: "season-backfill-repeat" },
   { name: "subtitle-sweep", every: 2 * HOUR, jobId: "subtitle-sweep-repeat" },
+  { name: "seerr-user-sync", every: 6 * HOUR, jobId: "seerr-user-sync-repeat" },
   { name: "retention", every: 24 * HOUR, jobId: "retention-repeat" },
 ];
 
