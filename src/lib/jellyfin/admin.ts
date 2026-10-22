@@ -1,5 +1,5 @@
 import type { JellyfinConfig } from "./client";
-import { resolveUserId, isPlaceholderItem } from "./client";
+import { resolveUserId, isPlaceholderItem, placeholderRoot } from "./client";
 
 /**
  * Admin (write) operations against Jellyfin, using the server-wide Dashboard API
@@ -159,6 +159,37 @@ export async function findItemIdByTmdb(
     }
   }
   return null;
+}
+
+/**
+ * Keep JellyBridge's placeholder library out of every user's home-screen
+ * "Recently added" row. Its daily refresh adds hundreds of promo titles, which
+ * would otherwise bury the real new arrivals. Found by path, not by name, so a
+ * renamed library still matches. Idempotent; returns how many users changed.
+ */
+export async function hidePlaceholderLibraryFromLatest(cfg: JellyfinConfig): Promise<number> {
+  const libs = await jfetch(cfg, "GET", "/Library/VirtualFolders");
+  if (!libs.ok || !Array.isArray(libs.data)) return 0;
+  const root = placeholderRoot();
+  const lib = libs.data.find((l: any) =>
+    (l.Locations ?? []).some((p: string) => p.replace(/\/+$/, "") === root),
+  );
+  if (!lib?.ItemId) return 0;
+  const users = await jfetch(cfg, "GET", "/Users");
+  if (!users.ok || !Array.isArray(users.data)) return 0;
+  let changed = 0;
+  for (const u of users.data) {
+    const conf = u.Configuration ?? {};
+    const excluded = new Set<string>((conf.LatestItemsExcludes ?? []).map(String));
+    if (excluded.has(lib.ItemId)) continue;
+    excluded.add(lib.ItemId);
+    const r = await jfetch(cfg, "POST", `/Users/${u.Id}/Configuration`, {
+      ...conf,
+      LatestItemsExcludes: [...excluded],
+    });
+    if (r.ok) changed++;
+  }
+  return changed;
 }
 
 /* ------------------------------------------------------------------ *

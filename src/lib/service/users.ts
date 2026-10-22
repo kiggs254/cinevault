@@ -5,7 +5,7 @@ import { getConfig } from "../config";
 import { hashPassword, verifyPassword } from "../password";
 import { encrypt, safeDecrypt } from "../crypto";
 import { jellyfinReady } from "../jellyfin/client";
-import { createJellyfinUser, setUserDisabled, deleteJellyfinUser } from "../jellyfin/admin";
+import { createJellyfinUser, setUserDisabled, deleteJellyfinUser, hidePlaceholderLibraryFromLatest } from "../jellyfin/admin";
 import { importJellyfinUsers, seerrReady } from "../seerr/client";
 import { notifyUser, notifyOwnerNewRegistration } from "../telegram/client";
 import { validInvite, consumeInvite } from "./invites";
@@ -161,6 +161,8 @@ export async function approveUser(id: string): Promise<ApproveResult> {
       console.error("[seerr] import of new member failed:", (e as Error).message),
     );
   }
+  // …and keep the Request library's placeholders off their home screen.
+  await hidePlaceholderLibraryFromLatest(cfg.jellyfin).catch(() => {});
   await notifyUser(id, `✅ You're in! Your Cinevault + Jellyfin account “${user.username}” is ready.`, {
     buttons: [{ text: "Get set up", path: `/welcome?token=${user.statusToken}` }],
   }).catch(() => {});

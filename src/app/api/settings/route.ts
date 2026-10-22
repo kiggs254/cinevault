@@ -176,11 +176,10 @@ export async function POST(req: Request) {
       }
       case "seerrSync": {
         if (!seerrReady(cfg.seerr)) throw new Error("Seerr URL + API key required");
-        const { imported } = await syncSeerrUsers();
-        return NextResponse.json({
-          ok: true,
-          message: imported ? `Added ${imported} member(s) to Seerr` : "Every member is already in Seerr",
-        });
+        const { imported, latestHiddenFor } = await syncSeerrUsers();
+        const parts = [imported ? `added ${imported} member(s) to Seerr` : "every member is already in Seerr"];
+        if (latestHiddenFor) parts.push(`hid the Request library from "Recently added" for ${latestHiddenFor}`);
+        return NextResponse.json({ ok: true, message: parts.join("; ") });
       }
       case "rescan": {
         if (!cfg.jellyfin.url || !cfg.jellyfin.apiKey) throw new Error("Jellyfin URL + API key required");

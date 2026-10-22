@@ -85,6 +85,11 @@ function peopleNames(item: any): string[] {
  */
 const PLACEHOLDER_ROOT = `${(process.env.JELLYBRIDGE_DIR || "/jellybridge").replace(/\/+$/, "")}/`;
 
+/** JellyBridge's placeholder directory as Jellyfin sees it, without a trailing slash. */
+export function placeholderRoot(): string {
+  return PLACEHOLDER_ROOT.slice(0, -1);
+}
+
 /** True for an item that lives in JellyBridge's placeholder library (needs Fields=Path). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isPlaceholderItem(item: any): boolean {

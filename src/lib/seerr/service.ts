@@ -19,6 +19,8 @@ import { subscribeMovie } from "../service/wanted";
 import { logActivity } from "../activity";
 import { notifyActivity } from "../telegram/client";
 import { getSeerrRequest, importJellyfinUsers, normalizeJellyfinId, seerrReady } from "./client";
+import { jellyfinReady } from "../jellyfin/client";
+import { hidePlaceholderLibraryFromLatest } from "../jellyfin/admin";
 import type { TmdbRequestData } from "../types";
 
 /** The webhook JSON we configure Seerr to send (its {{template}} variables). */
@@ -164,12 +166,17 @@ export async function fulfilTmdbRequest(r: TmdbRequestData): Promise<void> {
 }
 
 /**
- * Make sure every active member exists in Seerr — JellyBridge can only file a ♥
- * as a request for someone Seerr knows. Idempotent; Seerr skips existing users.
+ * JellyBridge housekeeping, run every 6 hours: make sure every active member
+ * exists in Seerr (JellyBridge can only file a ♥ for someone Seerr knows) and
+ * that the placeholder library stays off everyone's "Recently added" row —
+ * including members approved since the last run. Idempotent.
  */
-export async function syncSeerrUsers(): Promise<{ imported: number }> {
+export async function syncSeerrUsers(): Promise<{ imported: number; latestHiddenFor: number }> {
   const cfg = await getConfig();
-  if (!seerrReady(cfg.seerr)) return { imported: 0 };
+  const latestHiddenFor = jellyfinReady(cfg.jellyfin)
+    ? await hidePlaceholderLibraryFromLatest(cfg.jellyfin).catch(() => 0)
+    : 0;
+  if (!seerrReady(cfg.seerr)) return { imported: 0, latestHiddenFor };
   const users = await prisma.user.findMany({
     where: { status: "active", jellyfinUserId: { not: null } },
     select: { jellyfinUserId: true },
@@ -178,5 +185,5 @@ export async function syncSeerrUsers(): Promise<{ imported: number }> {
     cfg.seerr,
     users.map((u) => u.jellyfinUserId as string),
   );
-  return { imported };
+  return { imported, latestHiddenFor };
 }
