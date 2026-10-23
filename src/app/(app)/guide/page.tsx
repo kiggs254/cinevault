@@ -21,12 +21,14 @@ import {
 } from "lucide-react";
 import { NotifyToggleFull } from "@/components/notify-toggle";
 import { JELLYFIN_APPS, GUIDELINES, HOW_IT_WORKS } from "@/lib/community";
+import { MoonfinSetup } from "@/components/moonfin-setup";
 
-const HOW_ICONS = [SearchIcon, MonitorPlay, Tv, Sparkles];
+const HOW_ICONS = [Smartphone, SearchIcon, MonitorPlay, Sparkles];
 
 const TABS = [
   { id: "how", label: "How it works", icon: BookOpen },
-  { id: "setup", label: "Set up Jellyfin", icon: MonitorPlay },
+  { id: "setup", label: "Set up Moonfin", icon: Smartphone },
+  { id: "jellyfin", label: "Jellyfin app", icon: MonitorPlay },
   { id: "rules", label: "Guidelines", icon: ShieldCheck },
   { id: "invite", label: "Invite", icon: Ticket },
 ] as const;
@@ -203,7 +205,22 @@ export default function GuidePage() {
       )}
 
       {tab === "setup" && (
+        <div className="space-y-6">
+          <MoonfinSetup serverUrl={me?.serverUrl ?? null} username={me?.username} />
+          <div className="text-sm text-muted">
+            <p className="label mb-2">Turn on notifications</p>
+            <NotifyToggleFull />
+          </div>
+        </div>
+      )}
+
+      {tab === "jellyfin" && (
         <div className="space-y-5 text-sm text-muted">
+          <p>
+            The official Jellyfin app plays the same library, but it <b className="text-ink">can&apos;t request</b>.
+            Use it where Moonfin isn&apos;t available — mainly <b className="text-ink">Samsung and LG TVs</b>{" "}— and
+            request from Moonfin on your phone (or the Cinevault app). Anything you request appears in Jellyfin too.
+          </p>
           <div>
             <p className="label mb-2">1 · Install Jellyfin</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -227,9 +244,9 @@ export default function GuidePage() {
           <div>
             <p className="label mb-2">2 · Add the server</p>
             <p className="mb-2">In the Jellyfin app, tap “Add Server” and enter:</p>
-            <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-border bg-surface-2 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
               <Globe size={15} className="flex-none text-faint" />
-              <code className="mono whitespace-nowrap text-sm text-ink">
+              <code className="mono min-w-0 break-all text-sm text-ink">
                 {me?.serverUrl || "ask the admin for the server address"}
               </code>
             </div>
@@ -238,12 +255,8 @@ export default function GuidePage() {
             <p className="label mb-2">3 · Sign in</p>
             <p>
               Use your Cinevault username{me?.username ? <span className="mono text-ink"> ({me.username})</span> : ""}{" "}
-              and the same password. That&apos;s it — your library is waiting.
+              and the same password.
             </p>
-          </div>
-          <div>
-            <p className="label mb-2">4 · Turn on notifications</p>
-            <NotifyToggleFull />
           </div>
         </div>
       )}

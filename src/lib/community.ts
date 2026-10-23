@@ -6,20 +6,20 @@
 /** How the service works, in four beats (orientation). */
 export const HOW_IT_WORKS: { title: string; body: string }[] = [
   {
-    title: "Find it",
-    body: "In the Cinevault app, use Search or Discover to find any movie or show, open it, and tap Add to Library.",
+    title: "Get Moonfin",
+    body: "Install the free Moonfin app on your phone, TV or computer and sign in with your Cinevault username & password. It's where you watch — and where you ask for new things.",
+  },
+  {
+    title: "Find anything",
+    body: "Search in Moonfin for any movie or show. If it's not here yet, tap Request. (You can also use Search or Discover in the Cinevault app.)",
   },
   {
     title: "We fetch it",
-    body: "If it's already in the shared library it's added instantly; otherwise it's downloaded and shows up in your library — usually within minutes.",
-  },
-  {
-    title: "Watch on Jellyfin",
-    body: "Install the free Jellyfin app on any device and sign in with the same username & password. You can stream your own additions plus everything other members have added to their libraries.",
+    body: "If it's already in the shared library it's there instantly; otherwise it's downloaded into your library — usually within minutes — and you get a notification when it's ready.",
   },
   {
     title: "Your own space",
-    body: "Everyone has their own library, follows and notifications. Connect Telegram or turn on push to get pinged the moment a title is ready.",
+    body: "Everyone has their own library, follows and notifications — and you can stream everything other members have added too. Connect Telegram or turn on push to get pinged the moment a title is ready.",
   },
 ];
 
@@ -43,11 +43,30 @@ export const GUIDELINES: { t: string; d: string }[] = [
   },
 ];
 
-/** Official Jellyfin clients. Store links are stable; the catch-all goes to the
- *  canonical downloads page (always correct for Fire TV / Roku / LG / Samsung). */
+/** Official Jellyfin clients — the fallback app (it plays the library but can't
+ *  request). Mainly for Samsung/LG TVs, where Moonfin isn't in the store. The
+ *  catch-all goes to the canonical downloads page (always correct for LG/Samsung). */
 export const JELLYFIN_APPS: { label: string; href: string; kind: "mobile" | "tv" }[] = [
   { label: "iPhone / iPad", href: "https://apps.apple.com/app/jellyfin-mobile/id1480192618", kind: "mobile" },
   { label: "Android", href: "https://play.google.com/store/apps/details?id=org.jellyfin.mobile", kind: "mobile" },
   { label: "Android TV / Fire TV", href: "https://play.google.com/store/apps/details?id=org.jellyfin.androidtv", kind: "tv" },
   { label: "Roku, LG, Samsung & more", href: "https://jellyfin.org/downloads/clients/", kind: "tv" },
+];
+
+/**
+ * Moonfin is the app members use: it plays the shared Jellyfin library AND can
+ * request (through the server's Seerr). The official Jellyfin app is the
+ * fallback — mainly for Samsung/LG TVs, where Moonfin isn't in the store.
+ */
+export const MOONFIN_WHY: string[] = [
+  "Watch everything in the shared library, on your phone, TV or computer.",
+  "Request anything: its search finds every movie and show — not just what's already here. Tap Request and it's downloaded into your library.",
+];
+
+/** Moonfin store listings. Samsung & LG TVs have none (sideload only), so they're left out on purpose. */
+export const MOONFIN_APPS: { label: string; href: string; kind: "mobile" | "tv" }[] = [
+  { label: "Android phone & Android / Google TV", href: "https://play.google.com/store/apps/details?id=org.moonfin.androidtv", kind: "mobile" },
+  { label: "iPhone, iPad & Apple TV", href: "https://apps.apple.com/app/moonfin/id6761283970", kind: "mobile" },
+  { label: "Fire TV", href: "https://www.amazon.com/Moonfin/dp/B0H76BG3DW", kind: "tv" },
+  { label: "Roku", href: "https://channelstore.roku.com/details/92a83c9f4112b76a7bcee3dc076254ca:3251a91bf7af7339652d5409ccfdcb39/moonfin", kind: "tv" },
 ];

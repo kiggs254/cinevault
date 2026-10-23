@@ -13,13 +13,13 @@ import {
   ArrowLeft,
   Search,
   MonitorPlay,
-  Tv,
+  Smartphone,
   Sparkles,
   ShieldCheck,
 } from "lucide-react";
 import { HOW_IT_WORKS, GUIDELINES } from "@/lib/community";
 
-const HIW_ICONS = [Search, MonitorPlay, Tv, Sparkles];
+const HIW_ICONS = [Smartphone, Search, MonitorPlay, Sparkles];
 const STEP_LABELS = ["How it works", "House rules", "Create account"];
 
 function StepBar({ step }: { step: number }) {
@@ -179,7 +179,7 @@ export default function RegisterPage() {
             <form onSubmit={submit}>
               <h2 className="text-lg font-semibold text-ink">Create your account</h2>
               <p className="mt-1 mb-4 text-sm text-muted">
-                This username &amp; password sign you in here and on Jellyfin, where you&apos;ll watch.
+                This username &amp; password sign you in here and in the Moonfin app, where you&apos;ll watch and request.
               </p>
 
               <label className="label mb-2 block" htmlFor="code">

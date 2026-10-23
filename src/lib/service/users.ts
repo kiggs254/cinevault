@@ -163,9 +163,15 @@ export async function approveUser(id: string): Promise<ApproveResult> {
   }
   // …and keep the Request library's placeholders off their home screen.
   await hidePlaceholderLibraryFromLatest(cfg.jellyfin).catch(() => {});
-  await notifyUser(id, `✅ You're in! Your Cinevault + Jellyfin account “${user.username}” is ready.`, {
-    buttons: [{ text: "Get set up", path: `/welcome?token=${user.statusToken}` }],
-  }).catch(() => {});
+  await notifyUser(
+    id,
+    `✅ You're in! Your Cinevault account “${user.username}” is ready.\n\n` +
+      `📱 Next: install the free Moonfin app — it's where you watch and request anything. ` +
+      `Four quick steps are below.`,
+    {
+      buttons: [{ text: "Get set up", path: `/welcome?token=${user.statusToken}` }],
+    },
+  ).catch(() => {});
   return { ok: true };
 }
 
