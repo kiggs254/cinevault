@@ -98,8 +98,8 @@ const SECTIONS: Section[] = [
   },
   {
     group: "media",
-    title: "Requests from Jellyfin (JellyBridge + Seerr)",
-    desc: "Members press ♥ on a title in Jellyfin's Discover library; the JellyBridge plugin files it in Seerr, and Seerr's webhook hands it to Cinevault to download into that member's library. Seerr runs beside Jellyfin on the same Docker network (use http://seerr:5055). Point Seerr's Webhook notification at /api/integrations/seerr on this app, with the Authorization header set to \"Bearer <webhook secret>\".",
+    title: "Requests from Moonfin (Seerr)",
+    desc: "Members request from the Moonfin app: its search reaches Seerr through the Moonbase plugin in Jellyfin, and Seerr's webhook hands each request to Cinevault to download into that member's library. Seerr runs privately beside Jellyfin with no Radarr/Sonarr (use http://seerr:5055). Point Seerr's Webhook notification at /api/integrations/seerr on this app, with the Authorization header set to \"Bearer <webhook secret>\".",
     test: "seerr",
     actions: [{ key: "seerrSync", label: "Sync members to Seerr" }],
     fields: [
